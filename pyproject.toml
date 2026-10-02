@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flexboot"
+version = "0.1.0"
+description = "Build and maintain transparent GRUB multiboot media"
+readme = "README.md"
+requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
+authors = [{name = "FlexBoot contributors"}]
+dependencies = []
+
+[project.scripts]
+flexboot = "flexboot.cli:main"
+
+[tool.setuptools.package-data]
+flexboot = ["assets/*", "assets/theme/*"]
+
+[tool.setuptools.packages.find]
+include = ["flexboot*"]

@@ -1,0 +1,57 @@
+# Python caches and build outputs
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.coverage
+htmlcov/
+
+# User-supplied media, test disks, mounts, and local backups
+*.iso
+*.img
+*.raw
+*.qcow2
+*.vdi
+*.vmdk
+out/
+mnt/
+mounts/
+tmp/
+FlexBoot-backups/
+*.partial
+*.removing
+*.tar.gz
+
+# Local credentials, editor files, and host state
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.idea/
+.vscode/
+.DS_Store
+*.swp
+*.log
+
+# Local build instructions and internal development records
+AGENTS.md
+CODEX_PROMPT.md
+README_START_HERE.md
+START_CODEX.txt
+PACK_MANIFEST.json
+docs/ACCEPTANCE_CHECKLIST.md
+docs/PHASE_PLAN.md
+docs/PROJECT_BRIEF.md
+docs/PROJECT_REVIEW.md
+docs/DECISIONS.md
+docs/VERIFICATION.md
+scripts/add-verified-isos.sh
+scripts/deploy-kali-theme-test.sh
+scripts/rollback-kali-theme-test.sh
