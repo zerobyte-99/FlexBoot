@@ -10,7 +10,9 @@
   Create polished, auditable GRUB multiboot USB drives from ordinary Linux ISO files.
 </p>
 
-![FlexBoot Quantum Fold background](branding/background-quantum-fold.png)
+![FlexBoot GRUB boot menu showing ISO choices, firmware settings, reboot, and shutdown](docs/images/boot-menu.png)
+
+Actual GRUB screen captured in QEMU/OVMF at 1920×1080, with example ISO entries.
 
 FlexBoot is a small Linux command-line tool for building and maintaining UEFI multiboot media. ISO images remain intact as normal files, GRUB configuration stays readable, and every boot entry comes from an explicit profile that inspects the image contents.
 
