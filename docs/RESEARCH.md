@@ -26,4 +26,13 @@ Primary and project-maintained sources reviewed on 2026-09-30:
 - Clonezilla Live 3.3.3-37 amd64: product marker and complete `/live` layout present; SHA-256 `3079458d926a37d3533e5d5caeb61b6e49c2dc69e2c97e0332ef37986bb3414f` matches the publisher checksum.
 - Rescuezilla 2.6.2 Resolute: label `Rescuezilla` and complete casper layout present; SHA-256 `20dfdad31d3da56b8dd3978159721f19071916f65e123003a850fdecec85ae3f` matches the GitHub release asset digest.
 
-No Ventoy source, scripts, binaries, or behavior were used.
+## Windows boot mechanisms
+
+- [Microsoft: installing Windows from a USB flash drive](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/install-windows-from-a-usb-flash-drive?view=windows-11) documents native installer files, FAT32, and splitting oversized WIM files for Windows Setup.
+- [GNU GRUB: loopback booting](https://www.gnu.org/software/grub/manual/grub/html_node/Loopback-booting.html) explains that reading an image in GRUB does not arrange the operating system's own access to that image.
+- [iPXE wimboot](https://ipxe.org/wimboot) and its [architecture](https://ipxe.org/appnote/wimboot_architecture) document WinPE WIM boot and the virtual boot-file filesystem.
+- At the user's request, [Ventoy's Windows ISO WIMBOOT mode](https://www.ventoy.net/en/doc_wimboot.html) and [separate WIM plugin](https://www.ventoy.net/en/plugin_wimboot.html) were compared at the documentation level. The former describes normal ISO CD-ROM emulation and an alternative boot mode; the latter uses an auxiliary image containing Microsoft boot files.
+
+See [Windows and other boot families](WINDOWS.md) for the implications for FlexBoot.
+No Ventoy source, scripts, binaries, or plugins have been copied, adapted,
+downloaded, or executed. FlexBoot has no Ventoy runtime dependency.
