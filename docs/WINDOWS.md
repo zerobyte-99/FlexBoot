@@ -48,9 +48,9 @@ storage, adding an explicitly requested FAT32 Windows installer partition.
   host-provided WIM utility, such as wimlib, with its output validated.
 - Reject other oversized files unless a documented conversion is explicitly
   implemented; splitting WIM is not a generic solution for oversized ESD files.
-- Initially use one installer per partition. Putting several installers in
-  subdirectories without reviewing BCD and Setup path resolution is not a reliable
-  multiboot solution.
+- Multiple installers can share this partition in separate directories. They
+  require explicit boot-image selection and Setup source routing; simply copying
+  several ISO trees does not provide either mechanism.
 
 Microsoft documents both FAT32 installer media and Setup's automatic use of split
 WIM files in its [USB installation guide](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/install-windows-from-a-usb-flash-drive?view=windows-11).
@@ -59,6 +59,48 @@ This design needs an opt-in layout at media creation. Adding a partition to an
 existing drive must not silently shrink or repartition it. The original two-partition
 Linux layout remains valid. Firmware boot selection across multiple FAT partitions
 and GRUB-to-Microsoft handoff must be tested, rather than assumed.
+
+## Several installers on one FAT32 partition
+
+One installer per partition is a simple baseline, not a Windows or FAT32
+requirement. A shared Windows partition can hold directories such as
+`/windows/win11/`, `/windows/server/`, and `/windows/recovery/`, each containing
+its own extracted resources and any split WIM parts.
+
+There are two separate selections to solve:
+
+1. Load the chosen Windows PE boot image through Windows Boot Manager or a
+   WIM-aware loader.
+2. Start the matching Setup executable with the intended installation payload,
+   rather than allowing automatic media discovery to select a different image.
+
+Microsoft documents [Setup's `/InstallFrom` option](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options?view=windows-11#installfrom)
+for a particular WIM or the first part of a split SWM series. Its
+[`Winpeshl.ini` interface](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpeshlini-reference-launching-an-app-when-winpe-starts?view=windows-11)
+can launch a startup program inside Windows PE.
+
+A FlexBoot Windows backend could prepare per-image startup logic that locates the
+Windows partition using an installation marker, checks the selected image ID,
+and launches that image's Setup and payload. Drive letters must be discovered at
+runtime. Each installer should retain its matching PE/Setup resources until
+cross-version compatibility is deliberately tested.
+
+For a single GRUB menu, each Windows entry needs a tested loader handoff that
+selects its boot image and conveys the same image ID into Windows PE. Separate
+directories alone do not make Microsoft's EFI loader discover arbitrary BCD
+stores, nor does standard GRUB chainloading select a BCD entry automatically.
+An explicit WIM-loader bridge is a candidate for this middle layer; its local
+UEFI handoff must be validated before choosing a runtime or implementation.
+
+An alternative is GRUB handing off to a shared Windows Boot Manager with its own
+BCD selection menu. That reduces the need for a custom GRUB-to-image selector but
+introduces a second menu. A shared Windows PE dispatcher could also select the
+installation source after startup, likewise adding another selection step.
+
+The preferred target is therefore one shared Windows partition, per-image
+prepared resources, and one visible GRUB menu, with no writes to a persistent
+"selected image" file during boot. This is an architecture proposal, not a claim
+that the required handoff is already implemented or tested.
 
 ## Intact-ISO alternative
 
