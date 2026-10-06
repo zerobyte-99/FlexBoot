@@ -17,3 +17,10 @@ class UnsupportedISOError(FlexBootError):
 class VerificationError(FlexBootError):
     """Installed state is inconsistent."""
 
+
+class MediaStateError(SafetyError):
+    """Media inconsistency or a failed rollback requires stopping the operation."""
+
+
+class CleanupError(SafetyError):
+    """An active mount or loop requires administrator recovery."""

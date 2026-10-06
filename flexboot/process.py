@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import sys
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -30,9 +32,12 @@ class Runner:
         capture: bool = True,
         input_text: str | None = None,
         mutate: bool = False,
+        output_to_stderr: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         args = [str(value) for value in argv]
         self.planned.append(args)
+        if self.verbose:
+            print("+ " + shlex.join(args), file=sys.stderr)
         if mutate and self.dry_run:
             return subprocess.CompletedProcess(args, 0, "", "")
         try:
@@ -41,7 +46,7 @@ class Runner:
                 check=check,
                 text=True,
                 input=input_text,
-                stdout=subprocess.PIPE if capture else None,
+                stdout=subprocess.PIPE if capture else (sys.stderr if output_to_stderr else None),
                 stderr=subprocess.PIPE if capture else None,
                 shell=False,
             )
@@ -50,4 +55,3 @@ class Runner:
         except subprocess.CalledProcessError as exc:
             detail = (exc.stderr or exc.stdout or "").strip()
             raise FlexBootError(f"Command failed ({exc.returncode}): {' '.join(args)}" + (f"\n{detail}" if detail else "")) from exc
-

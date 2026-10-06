@@ -2,14 +2,16 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
+import re
+import shutil
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Iterable
 
 from .errors import FlexBootError
 from .process import Runner
 
-LSBLK_COLUMNS = "NAME,PATH,TYPE,PKNAME,MAJ:MIN,SIZE,MODEL,VENDOR,SERIAL,TRAN,RM,RO,PTTYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS"
+LSBLK_COLUMNS = "NAME,PATH,TYPE,PKNAME,MAJ:MIN,SIZE,MODEL,VENDOR,SERIAL,TRAN,RM,RO,PTTYPE,FSTYPE,LABEL,UUID,MOUNTPOINTS,PARTN,PARTTYPE"
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ class Device:
     uuid: str = ""
     mountpoints: tuple[str, ...] = ()
     children: tuple["Device", ...] = field(default_factory=tuple)
+    partition_number: int = 0
+    partition_type: str = ""
 
     def descendants(self) -> Iterable["Device"]:
         for child in self.children:
@@ -84,6 +88,7 @@ def _device(raw: dict[str, Any]) -> Device:
         label=str(raw.get("label") or ""), uuid=str(raw.get("uuid") or ""),
         mountpoints=tuple(str(x) for x in mountpoints if x),
         children=tuple(_device(x) for x in raw.get("children") or []),
+        partition_number=_integer(raw.get("partn")), partition_type=str(raw.get("parttype") or "").lower(),
     )
 
 
@@ -95,12 +100,49 @@ def parse_lsblk(text: str) -> list[Device]:
         raise FlexBootError(f"Could not parse lsblk output: {exc}") from exc
 
 
+def transport_fallback(device: Device, runner: Runner) -> str:
+    if device.type != "disk":
+        return ""
+    try:
+        sysfs = (Path("/sys/class/block") / device.path.name / "device").resolve(strict=True)
+        if any(re.fullmatch(r"usb\d+", part) for part in sysfs.parts):
+            return "usb"
+    except OSError:
+        sysfs = None
+    if shutil.which("udevadm"):
+        result = runner.run(["udevadm", "info", "--query=property", f"--name={device.path}"], check=False)
+        if result.returncode == 0:
+            properties = dict(line.split("=", 1) for line in result.stdout.splitlines() if "=" in line)
+            return properties.get("ID_BUS", "")
+    return ""
+
+
 def discover(runner: Runner | None = None, target: Path | None = None) -> list[Device]:
     run = runner or Runner()
     argv = ["lsblk", "--json", "--bytes", "--output", LSBLK_COLUMNS]
     if target:
         argv.append(str(target))
-    return parse_lsblk(run.run(argv).stdout)
+    result = run.run(argv, check=False)
+    columns_index = argv.index(LSBLK_COLUMNS)
+    while result.returncode and "unknown column" in result.stderr.lower():
+        optional = next((name for name in ("TRAN", "PARTN") if name in result.stderr and name in argv[columns_index].split(",")), None)
+        if optional is None:
+            break
+        argv[columns_index] = ",".join(name for name in argv[columns_index].split(",") if name != optional)
+        result = run.run(argv, check=False)
+    if result.returncode:
+        raise FlexBootError("Device discovery failed: " + result.stderr.strip())
+    def enrich(device: Device) -> Device:
+        number = device.partition_number
+        if device.type == "part" and not number:
+            try:
+                number = int((Path("/sys/class/block") / device.path.name / "partition").read_text().strip())
+            except (OSError, ValueError):
+                number = 0
+        return replace(device, transport=device.transport or transport_fallback(device, run),
+                       partition_number=number,
+                       children=tuple(enrich(child) for child in device.children))
+    return [enrich(device) for device in parse_lsblk(result.stdout)]
 
 
 def flatten(devices: Iterable[Device]) -> Iterable[Device]:

@@ -41,6 +41,7 @@ FlexBoot-backups/
 *.log
 
 # Local build instructions and internal development records
+IMPROVEMENTS.md
 AGENTS.md
 CODEX_PROMPT.md
 README_START_HERE.md

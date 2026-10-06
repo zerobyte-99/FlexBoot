@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import os
+import re
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
 
-from .errors import FlexBootError, SafetyError
+from .errors import CleanupError, FlexBootError, SafetyError
 from .process import Runner
 
 
@@ -29,12 +30,14 @@ def attached_image(image: Path, runner: Runner, *, readonly: bool = False) -> It
         args.append("--read-only")
     result = runner.run([*args, str(image.resolve())], mutate=True)
     loop = Path(result.stdout.strip())
-    if not str(loop).startswith("/dev/loop"):
+    if not re.fullmatch(r"/dev/loop\d+", str(loop)):
         raise SafetyError(f"Unexpected loop device response: {loop}")
     try:
         yield AttachedTarget(loop, "image")
     finally:
-        runner.run(["losetup", "--detach", str(loop)], check=False, mutate=True)
+        detached = runner.run(["losetup", "--detach", str(loop)], check=False, mutate=True)
+        if detached.returncode:
+            raise CleanupError(f"Could not detach {loop}; preserve backing image {image} for recovery")
 
 
 def create_sparse(path: Path, size: int, *, runner: Runner) -> None:
@@ -50,6 +53,10 @@ def create_sparse(path: Path, size: int, *, runner: Runner) -> None:
     try:
         os.ftruncate(fd, size)
         os.fsync(fd)
+    except BaseException:
+        # This function owns the newly created file even if truncation fails.
+        path.unlink(missing_ok=True)
+        raise
     finally:
         os.close(fd)
 

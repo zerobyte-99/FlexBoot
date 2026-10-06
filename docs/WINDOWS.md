@@ -125,8 +125,8 @@ Before advertising Windows support:
   metadata, and target identity before writing.
 - Stage changes so a failed preparation cannot leave a boot menu claiming a valid
   installer. Track extracted files and split-image output for verification/removal.
-- Fix the existing mount-cleanup and ancestry issues described in
-  [Security](SECURITY.md#known-safety-issues) before broadening privileged writes.
+- Maintain regression coverage for mount cleanup and ancestry protection described
+  in [Security](SECURITY.md#validation-limits) before broadening privileged writes.
 - Test a user-supplied Windows ISO in disposable QEMU media with no physical disks
   exposed, then deliberately test representative hardware.
 - Distinguish Windows installer, WinPE recovery, and installed-Windows/VHD boot.

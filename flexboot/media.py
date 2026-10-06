@@ -5,12 +5,14 @@ import json
 import os
 import shutil
 import struct
+import uuid
+import tempfile
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
 from . import __version__
 from .branding import BRAND
-from .errors import FlexBootError
+from .errors import DependencyError, FlexBootError, MediaStateError, SafetyError
 from .grub import atomic_text, base_config, generated_config, validate_config
 from .iso import require_supported, validate_filename
 from .manifest import ISORecord, Manifest, copy_and_hash, sha256_file
@@ -88,12 +90,14 @@ def validate_background(path: Path) -> tuple[int, int]:
 
 def _atomic_copy(source: Path, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
-    temporary = destination.with_name(destination.name + ".tmp")
+    fd, raw = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+    temporary = Path(raw)
     try:
-        with source.open("rb") as src, temporary.open("wb") as dst:
+        with os.fdopen(fd, "wb") as dst, source.open("rb") as src:
             shutil.copyfileobj(src, dst)
             dst.flush()
             os.fsync(dst.fileno())
+        temporary.chmod(0o644)
         os.replace(temporary, destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -227,32 +231,109 @@ def regenerate(paths: MediaPaths, manifest: Manifest, runner: Runner | None = No
         candidate.unlink(missing_ok=True)
 
 
-def add_iso(paths: MediaPaths, source: Path, runner: Runner | None = None) -> ISORecord:
+@dataclass(frozen=True)
+class AddResult:
+    record: ISORecord
+    status: str
+
+
+def check_free_space(paths: MediaPaths, size: int) -> None:
+    stats = os.statvfs(paths.data)
+    available = stats.f_bavail * stats.f_frsize
+    required = size + 8 * 1024 * 1024
+    if available < required:
+        raise MediaStateError(f"Not enough free space: need {required} bytes including metadata reserve; available {available} bytes")
+
+
+def add_iso_result(paths: MediaPaths, source: Path, runner: Runner | None = None, *, replace: bool = False) -> AddResult:
     run = runner or Runner()
     source = source.resolve()
     validate_filename(source.name)
     if not source.is_file():
         raise FlexBootError(f"ISO is not a regular file: {source}")
+    inspected_state = source.stat()
     match = require_supported(source, run)
     manifest = Manifest.load(paths.manifest)
-    if any(item.filename == source.name for item in manifest.isos):
-        raise FlexBootError(f"ISO is already installed: {source.name}")
     destination = paths.iso_dir / source.name
-    if destination.exists():
-        raise FlexBootError(f"Destination already exists but is absent from manifest: {destination}")
+    previous = next((item for item in manifest.isos if item.filename == source.name), None)
+    if destination.is_symlink() or (destination.exists() and not destination.is_file()):
+        raise MediaStateError(f"ISO destination is not a regular file: {destination}")
+    if previous:
+        if not destination.is_file():
+            raise MediaStateError(f"Manifest ISO is missing: {destination}")
+        if not replace:
+            if destination.stat().st_size != previous.size or sha256_file(destination) != previous.sha256:
+                raise MediaStateError(f"Installed ISO is inconsistent: {source.name}; verify or explicitly replace it")
+            if source.stat().st_size == previous.size and sha256_file(source) == previous.sha256:
+                if ISORecord.from_match(source.name, previous.size, previous.sha256, match).boot_plan() != previous.boot_plan():
+                    raise MediaStateError(f"Stored boot profile is stale: {source.name}; run sync")
+                return AddResult(previous, "skipped")
+            raise FlexBootError(f"Different ISO content uses the installed name {source.name}; use --replace")
+    elif destination.exists():
+        raise MediaStateError(f"Destination exists but is absent from manifest: {destination}")
+    check_free_space(paths, source.stat().st_size)
     paths.iso_dir.mkdir(parents=True, exist_ok=True)
-    digest = copy_and_hash(source, destination)
-    record = ISORecord.from_match(source.name, source.stat().st_size, digest, match)
+    token = uuid.uuid4().hex
+    staged = paths.iso_dir / f".{source.name}.{token}.staged"
+    backup = paths.iso_dir / f".{source.name}.{token}.backup"
+    old_manifest = paths.manifest.read_text()
+    menu = paths.grub_dir / "generated.cfg"
+    old_menu = menu.read_text() if menu.exists() else None
+    published = False
     try:
+        digest = copy_and_hash(source, staged)
+        current_state = source.stat()
+        if (inspected_state.st_dev, inspected_state.st_ino, inspected_state.st_size, inspected_state.st_mtime_ns, inspected_state.st_ctime_ns) != (current_state.st_dev, current_state.st_ino, current_state.st_size, current_state.st_mtime_ns, current_state.st_ctime_ns):
+            raise FlexBootError("Source ISO changed after profile inspection")
+        record = ISORecord.from_match(source.name, staged.stat().st_size, digest, match)
+        record.boot_plan()
+        if previous:
+            os.replace(destination, backup)
+        os.replace(staged, destination)
+        published = True
+        manifest.isos = [item for item in manifest.isos if item.filename != source.name]
         manifest.isos.append(record)
         manifest.save(paths.manifest)
         regenerate(paths, manifest, run)
-    except BaseException:
-        destination.unlink(missing_ok=True)
-        manifest.isos = [item for item in manifest.isos if item.filename != source.name]
-        manifest.save(paths.manifest)
+    except BaseException as original:
+        try:
+            if published:
+                destination.unlink(missing_ok=True)
+            if backup.exists():
+                os.replace(backup, destination)
+            atomic_text(paths.manifest, old_manifest)
+            if old_menu is not None:
+                atomic_text(menu, old_menu)
+            else:
+                menu.unlink(missing_ok=True)
+        except BaseException as rollback:
+            raise MediaStateError(f"ISO operation failed and rollback is incomplete. Preserve {backup} and inspect media: {rollback}") from original
         raise
-    return record
+    finally:
+        staged.unlink(missing_ok=True)
+    backup.unlink(missing_ok=True)
+    return AddResult(record, "replaced" if previous else "added")
+
+
+def add_iso(paths: MediaPaths, source: Path, runner: Runner | None = None, *, replace: bool = False) -> ISORecord:
+    return add_iso_result(paths, source, runner, replace=replace).record
+
+
+def batch_add(paths: MediaPaths, sources: list[Path], runner: Runner, *, replace: bool = False,
+              continue_on_error: bool = False) -> list[dict[str, str]]:
+    outcomes = []
+    stopped = False
+    for source in sources:
+        if stopped:
+            outcomes.append({"file": str(source), "status": "not-attempted"})
+            continue
+        try:
+            result = add_iso_result(paths, source, runner, replace=replace)
+            outcomes.append({"file": str(source), "status": result.status, "profile": result.record.profile})
+        except (FlexBootError, OSError) as exc:
+            outcomes.append({"file": str(source), "status": "failed", "reason": str(exc)})
+            stopped = not continue_on_error or isinstance(exc, (SafetyError, DependencyError, OSError))
+    return outcomes
 
 
 def remove_iso(paths: MediaPaths, filename: str, runner: Runner | None = None) -> None:
@@ -282,18 +363,67 @@ def remove_iso(paths: MediaPaths, filename: str, runner: Runner | None = None) -
 def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
     old = Manifest.load(paths.manifest)
     records: list[ISORecord] = []
-    for iso_path in sorted(paths.iso_dir.glob("*.iso"), key=lambda path: path.name.casefold()):
+    for iso_path in sorted((path for path in paths.iso_dir.iterdir() if path.suffix.casefold() == ".iso"), key=lambda path: path.name.casefold()):
+        if iso_path.is_symlink() or not iso_path.is_file():
+            raise MediaStateError(f"ISO is not a regular file: {iso_path.name}")
         match = require_supported(iso_path, runner)
         previous = next((item for item in old.isos if item.filename == iso_path.name), None)
-        digest = previous.sha256 if previous and previous.size == iso_path.stat().st_size else sha256_file(iso_path)
+        digest = sha256_file(iso_path)
+        if previous and digest != previous.sha256:
+            raise MediaStateError(f"Local integrity mismatch: {iso_path.name}; sync will not accept changed content. Use add --replace with the intended source.")
         records.append(ISORecord.from_match(iso_path.name, iso_path.stat().st_size, digest, match))
     old.isos = records
-    old.save(paths.manifest)
     setting = theme_setting(paths)
-    deploy_theme(paths.efi, configured_background(paths), str(setting["layout"]))
-    atomic_text(paths.grub_dir / "grub.cfg", base_config(old.data_filesystem_uuid))
-    validate_config(paths.grub_dir / "grub.cfg", runner)
-    regenerate(paths, old, runner)
+    work = Path(tempfile.mkdtemp(prefix=".flexboot-sync-", dir=paths.efi))
+    theme = paths.grub_dir / "themes/flexboot"
+    saved_theme = work / "saved-theme"
+    original_text = {path: path.read_text() if path.exists() else None for path in
+                     (paths.manifest, paths.grub_dir / "grub.cfg", paths.grub_dir / "generated.cfg")}
+    theme_published = False
+    preserve_recovery = False
+    font_published = False
+    font = paths.grub_dir / "fonts/unicode.pf2"
+    try:
+        stage = MediaPaths(work, paths.data)
+        if font.is_file():
+            _atomic_copy(font, stage.grub_dir / "fonts/unicode.pf2")
+        if theme.is_dir():
+            shutil.copytree(theme, stage.grub_dir / "themes/flexboot")
+        deploy_theme(work, configured_background(paths), str(setting["layout"]))
+        for name, text in (("grub.cfg", base_config(old.data_filesystem_uuid)), ("generated.cfg", generated_config(old.isos))):
+            atomic_text(stage.grub_dir / name, text)
+            validate_config(stage.grub_dir / name, runner)
+        if theme.exists():
+            os.replace(theme, saved_theme)
+        theme.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(stage.grub_dir / "themes/flexboot", theme)
+        theme_published = True
+        if not font.exists():
+            _atomic_copy(stage.grub_dir / "fonts/unicode.pf2", font)
+            font_published = True
+        for name in ("grub.cfg", "generated.cfg"):
+            atomic_text(paths.grub_dir / name, (stage.grub_dir / name).read_text())
+        old.save(paths.manifest)
+    except BaseException as original:
+        try:
+            if theme_published:
+                os.replace(theme, work / "failed-theme")
+            if saved_theme.exists():
+                os.replace(saved_theme, theme)
+            if font_published:
+                font.unlink(missing_ok=True)
+            for path, text in original_text.items():
+                if text is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_text(path, text)
+        except BaseException as rollback:
+            preserve_recovery = True
+            raise MediaStateError(f"Sync rollback failed; preserve recovery files at {work}: {rollback}") from original
+        raise
+    finally:
+        if not preserve_recovery:
+            shutil.rmtree(work)
     return old
 
 
@@ -304,19 +434,30 @@ def verify(paths: MediaPaths, *, full_hash: bool = True) -> list[str]:
     except FlexBootError as exc:
         return [str(exc)]
     expected_names = {item.filename for item in manifest.isos}
-    actual_names = {path.name for path in paths.iso_dir.glob("*.iso")}
+    actual_names = {path.name for path in paths.iso_dir.iterdir() if path.suffix.casefold() == ".iso"}
     for name in sorted(expected_names - actual_names):
         problems.append(f"Manifest entry is missing its file: {name}")
     for name in sorted(actual_names - expected_names):
         problems.append(f"ISO file is absent from manifest: {name}")
     for record in manifest.isos:
         path = paths.iso_dir / record.filename
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            problems.append(f"ISO is not a regular file: {record.filename}")
+            continue
         if not path.exists():
             continue
         if path.stat().st_size != record.size:
             problems.append(f"Size mismatch: {record.filename}")
         elif full_hash and sha256_file(path) != record.sha256:
             problems.append(f"Local integrity hash mismatch: {record.filename}")
+        if full_hash:
+            try:
+                match = require_supported(path)
+                detected = ISORecord.from_match(record.filename, record.size, record.sha256, match)
+                if detected.profile != record.profile or detected.boot_plan() != record.boot_plan():
+                    problems.append(f"Detected ISO boot profile differs from manifest: {record.filename}")
+            except (FlexBootError, OSError) as exc:
+                problems.append(f"Cannot verify ISO profile for {record.filename}: {exc}")
     generated = paths.grub_dir / "generated.cfg"
     expected = generated_config(manifest.isos)
     if not generated.exists() or generated.read_text(encoding="utf-8") != expected:

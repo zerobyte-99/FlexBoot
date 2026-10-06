@@ -11,23 +11,29 @@ from .errors import SafetyError
 def protected_device_names(devices: Iterable[Device], mount_sources: Iterable[str]) -> set[str]:
     roots = list(devices)
     all_devices = list(flatten(roots))
-    parents = {d.name: d.parent_name for d in all_devices}
+    parents: dict[str, set[str]] = {}
+    for device in all_devices:
+        if device.parent_name:
+            parents.setdefault(device.name, set()).add(device.parent_name)
     def record_tree_parent(parent: Device) -> None:
         for child in parent.children:
-            parents[child.name] = child.parent_name or parent.name
+            parents.setdefault(child.name, set()).add(parent.name)
             record_tree_parent(child)
     for root in roots:
         record_tree_parent(root)
     protected: set[str] = set()
     for source in mount_sources:
         try:
-            resolved = str(Path(source).resolve())
+            resolved = str(Path(source.split("[", 1)[0]).resolve())
         except OSError:
             resolved = source
-        match = next((d for d in all_devices if str(d.path.resolve()) == resolved), None)
-        while match:
-            protected.add(match.name)
-            match = next((d for d in all_devices if d.name == parents.get(match.name)), None)
+        pending = [d.name for d in all_devices if str(d.path.resolve()) == resolved]
+        while pending:
+            name = pending.pop()
+            if name in protected:
+                continue
+            protected.add(name)
+            pending.extend(parents.get(name, ()))
     return protected
 
 
@@ -42,6 +48,10 @@ def system_mount_sources() -> list[str]:
             source = line.split()[0]
             if source.startswith("/dev/"):
                 sources.append(source)
+            elif source.startswith("/"):
+                backing = source_for_mountpoint(source)
+                if backing.startswith("/dev/"):
+                    sources.append(backing)
     except OSError:
         return sources
     return sources

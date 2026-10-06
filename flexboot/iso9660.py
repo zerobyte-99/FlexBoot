@@ -28,7 +28,11 @@ class ISO9660Reader:
     def __init__(self, path: Path):
         self.path = path
         self._handle = path.open("rb")
-        self.volume_id, self._root, self._joliet = self._read_descriptors()
+        try:
+            self.volume_id, self._root, self._joliet = self._read_descriptors()
+        except BaseException:
+            self._handle.close()
+            raise
 
     def __enter__(self) -> "ISO9660Reader":
         return self

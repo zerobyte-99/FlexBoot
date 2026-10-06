@@ -10,11 +10,11 @@ from .branding import BRAND
 from .builder import build_attached, open_media, require_root
 from .devices import Device, discover, find_device, format_size
 from .disk import assert_loop_target
-from .doctor import diagnose
-from .errors import FlexBootError
-from .iso import inspect_iso
+from .doctor import PROFILES as CAPABILITIES, diagnose, preflight
+from .errors import CleanupError, FlexBootError
+from .iso import require_supported
 from .media import (
-    add_iso, available_layouts, available_themes, inspect as inspect_media, remove_iso,
+    batch_add, available_layouts, available_themes, inspect as inspect_media, remove_iso,
     resolve_builtin_theme, resolve_theme_layout, set_theme, sync as sync_media,
     validate_background, verify,
 )
@@ -36,7 +36,15 @@ def parser() -> argparse.ArgumentParser:
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=True)
     doctor = commands.add_parser("doctor", help="check host dependencies")
+    doctor.add_argument("--for", dest="profile", choices=CAPABILITIES, default="create", help="capability to check (default: create)")
     _add_output_options(doctor)
+    install = commands.add_parser("install", help="check setup; explicitly install dependencies or a global launcher")
+    install.add_argument("--for", dest="profile", choices=CAPABILITIES, default="create")
+    install.add_argument("--dependencies", action="store_true", help="install missing distribution packages (Debian/Ubuntu/Kali)")
+    install.add_argument("--system", action="store_true", help="install an isolated system-wide FlexBoot command")
+    install.add_argument("--prefix", type=Path, default=Path("/usr/local"))
+    install.add_argument("--yes", action="store_true", help="allow the package manager to proceed without its prompt")
+    _add_output_options(install, dry_run=True)
     devices = commands.add_parser("devices", help="list system storage and USB candidates")
     _add_output_options(devices)
     commands.add_parser("wizard", help="guided target selection")
@@ -54,10 +62,14 @@ def parser() -> argparse.ArgumentParser:
     ):
         sub = commands.add_parser(name, help=help_text)
         sub.add_argument("target", type=Path)
+        if name == "verify":
+            sub.add_argument("--quick", action="store_true", help="check structure and sizes without hashing ISO contents")
         _add_output_options(sub)
     add = commands.add_parser("add", help="inspect and add ISO files")
     add.add_argument("target", type=Path)
     add.add_argument("isos", nargs="+", type=Path)
+    add.add_argument("--replace", action="store_true", help="transactionally replace an installed ISO with the same name")
+    add.add_argument("--continue-on-error", action="store_true", help="continue after individual source errors; media failures still stop")
     _add_output_options(add, dry_run=True)
     remove = commands.add_parser("remove", help="remove an installed ISO")
     remove.add_argument("target", type=Path)
@@ -99,7 +111,7 @@ def _device_dict(device: Device, protected: set[str]) -> dict[str, object]:
 
 
 def command_doctor(args: argparse.Namespace) -> int:
-    result = diagnose()
+    result = diagnose(args.profile)
     if args.json:
         print(json.dumps(result, indent=2))
     else:
@@ -108,9 +120,14 @@ def command_doctor(args: argparse.Namespace) -> int:
         print(f"\nHost:\n  {host['system']} {host['release']}\n  Architecture: {host['architecture']}\n")
         print("Required:")
         for name, item in result["required"].items():
-            (ui.ok if item["found"] else ui.warn)(f"{name}" + ("" if item["found"] else f" (install package: {item['package']})"))
+            usable = item["found"] and item.get("usable", True)
+            (ui.ok if usable else ui.warn)(f"{name}" + ("" if usable else f" (missing or unusable; package: {item['package']})"))
         print("\nGRUB:\n  version: " + (result["grub_version"] or "unavailable"))
         print("  x86_64-efi support: " + ("available" if result["grub_target_x86_64_efi"] else "missing (package: grub-efi-amd64-bin)"))
+        print("  Unicode font: " + ("available" if result["grub_unicode_font"] else "missing (package: grub2-common)"))
+        print("\nCapabilities:")
+        for name, capability in result["capabilities"].items():
+            (ui.ok if capability["ready"] else ui.warn)(name + ("" if capability["ready"] else ": " + ", ".join(capability["missing"])))
         print("\nOptional:")
         for name, item in result["optional"].items():
             (ui.ok if item["found"] else ui.warn)(f"{name}" + ("" if item["found"] else f" (package: {item['package']})"))
@@ -179,6 +196,7 @@ def _confirm_interactive(device: Device) -> None:
 
 def command_create(args: argparse.Namespace) -> int:
     runner = Runner(dry_run=args.dry_run, verbose=args.verbose)
+    preflight("create")
     all_devices, protected = device_inventory()
     device = find_device(args.target)
     validate_physical_target(device, protected_names=protected, allow_non_usb=args.allow_non_usb)
@@ -193,20 +211,22 @@ def command_create(args: argparse.Namespace) -> int:
     else:
         _confirm_interactive(device)
     def identity_check() -> None:
-        revalidate_identity(before, find_device(args.target).identity())
+        current = find_device(args.target)
+        _, current_protected = device_inventory()
+        validate_physical_target(current, protected_names=current_protected, allow_non_usb=args.allow_non_usb)
+        revalidate_identity(before, current.identity())
     build_attached(device.path, runner, identity_check=identity_check)
     print(f"Created {BRAND.product_name} media on {device.path}")
     return 0
 
 
 def _read_command(args: argparse.Namespace, action: str) -> int:
-    require_root()
     runner = Runner(verbose=args.verbose)
     target_device = find_device(args.target, runner)
     with open_media(args.target, runner, readonly=True) as paths:
         if action == "verify":
-            problems = verify(paths)
-            payload = {"ok": not problems, "problems": problems}
+            problems = verify(paths, full_hash=not args.quick)
+            payload = {"ok": not problems, "problems": problems, "iso_hashes_checked": not args.quick}
         else:
             payload = inspect_media(paths, full_hash=action == "inspect")
             payload["device"] = _device_dict(target_device, set())
@@ -215,7 +235,8 @@ def _read_command(args: argparse.Namespace, action: str) -> int:
     if args.json:
         print(json.dumps(payload, indent=2))
     elif action == "verify":
-        if payload["ok"]: print("Verification passed: manifest, files, local hashes, loader, and generated menu are consistent.")
+        if payload["ok"]:
+            print("Quick checks passed: manifest, sizes, loader, and menu are consistent. ISO contents were not hashed." if args.quick else "Verification passed: manifest, files, local hashes, loader, and generated menu are consistent.")
         else:
             print("Verification failed:\n  " + "\n  ".join(payload["problems"]))
     elif action == "list":
@@ -240,19 +261,41 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
     if args.dry_run:
         if action == "add":
             matches = []
+            stopped = False
             for source in args.isos:
-                _, match = inspect_iso(source, runner)
-                if not match: raise FlexBootError(f"Unsupported ISO: {source}")
-                matches.append({"file": str(source), "profile": match.profile})
-            print(json.dumps({"action": action, "target": str(args.target), "isos": matches, "persistent_changes": False}, indent=2) if args.json else "Dry run passed; supported ISO(s) would be copied. No changes made.")
+                if stopped:
+                    matches.append({"file": str(source), "status": "not-attempted"})
+                    continue
+                try:
+                    match = require_supported(source, runner)
+                    matches.append({"file": str(source), "profile": match.profile, "status": "would-add-or-replace" if args.replace else "would-add-or-skip"})
+                except (FlexBootError, OSError) as exc:
+                    matches.append({"file": str(source), "status": "failed", "reason": str(exc)})
+                    stopped = not args.continue_on_error
+            payload = {"action": action, "target": str(args.target), "isos": matches, "persistent_changes": False, "target_validated": False, "free_space_checked": False}
+            if args.json:
+                print(json.dumps(payload, indent=2))
+            else:
+                for item in matches:
+                    print(f"{item['status']}: {item['file']}" + (f" — {item['reason']}" if "reason" in item else ""))
+                print("Source-only dry run; target, duplicates, and free space were not checked. No changes made.")
+            return 2 if any(item["status"] == "failed" for item in matches) else 0
         else:
             print(json.dumps({"action": action, "target": str(args.target), "persistent_changes": False}, indent=2) if args.json else f"Dry run: would {action} {args.target}. No changes made.")
         return 0
     require_root()
+    preflight("media")
     with open_media(args.target, runner) as paths:
         if action == "add":
-            for source in args.isos:
-                record = add_iso(paths, source, runner); print(f"Added {record.filename} ({record.profile})")
+            outcomes = batch_add(paths, args.isos, runner, replace=args.replace, continue_on_error=args.continue_on_error)
+            counts = {status: sum(item["status"] == status for item in outcomes) for status in ("added", "replaced", "skipped", "failed", "not-attempted")}
+            if args.json:
+                print(json.dumps({"target": str(args.target), "isos": outcomes, "summary": counts}, indent=2))
+            else:
+                for item in outcomes:
+                    print(f"{item['status']}: {item['file']}" + (f" — {item['reason']}" if "reason" in item else ""))
+                print("Summary: " + ", ".join(f"{count} {status}" for status, count in counts.items() if count))
+            return 2 if counts["failed"] else 0
         elif action == "remove":
             remove_iso(paths, args.iso_name, runner); print(f"Removed {args.iso_name}")
         else:
@@ -303,6 +346,7 @@ def command_theme(args: argparse.Namespace) -> int:
 
     require_root()
     runner = Runner(verbose=args.verbose)
+    preflight("media")
     with open_media(args.target, runner) as paths:
         setting = set_theme(paths, selection)
         problems = verify(paths, full_hash=False)
@@ -324,13 +368,20 @@ def command_image(args: argparse.Namespace) -> int:
             print(f"Dry run: would create sparse image {args.path} ({format_size(size)}). No changes made.")
             return 0
         require_root()
+        preflight("image")
+        created = False
         try:
             create_sparse(args.path, size, runner=runner)
+            created = True
             with attached_image(args.path, runner) as target:
                 assert_loop_target(target.device)
                 build_attached(target.device, runner)
+        except CleanupError:
+            # An active mount/loop may still need the image for recovery.
+            raise
         except BaseException:
-            args.path.unlink(missing_ok=True)
+            if created:
+                args.path.unlink(missing_ok=True)
             raise
         print(f"Created {args.path} ({format_size(size)})")
         return 0
@@ -355,6 +406,9 @@ def boot_image(args: argparse.Namespace) -> int:
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    if args.command == "install":
+        from .installer import run_install
+        return run_install(args)
     if args.command == "doctor": return command_doctor(args)
     if args.command == "devices": return command_devices(args)
     if args.command == "wizard": return command_wizard()
@@ -371,5 +425,5 @@ def main(argv: list[str] | None = None) -> int:
         return dispatch(parser().parse_args(argv))
     except KeyboardInterrupt:
         print("Interrupted; cleanup attempted.", file=sys.stderr); return 130
-    except FlexBootError as exc:
+    except (FlexBootError, OSError) as exc:
         print(f"flexboot: {exc}", file=sys.stderr); return 2

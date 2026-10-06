@@ -9,6 +9,8 @@ from flexboot.errors import FlexBootError
 from flexboot.manifest import ISORecord, Manifest, copy_and_hash, sha256_file
 from flexboot.grub import base_config
 from flexboot.media import MediaPaths, deploy_theme, regenerate, remove_iso, sync, verify
+from flexboot.profiles.debian_live import DebianLiveProfile
+from flexboot.profiles.base import ISOInspection
 
 
 class ManifestTests(unittest.TestCase):
@@ -58,7 +60,9 @@ class ManifestTests(unittest.TestCase):
             manifest.save(paths.manifest); regenerate(paths, manifest)
             (paths.grub_dir / "grub.cfg").write_text(base_config("1234-abcd"))
             deploy_theme(paths.efi)
-            self.assertEqual(verify(paths), [])
+            match = DebianLiveProfile().detect(ISOInspection(frozenset({"/live/vmlinuz", "/live/initrd", "/live/filesystem.squashfs"})))
+            with patch("flexboot.media.require_supported", return_value=match):
+                self.assertEqual(verify(paths), [])
             (paths.iso_dir / "extra.iso").write_bytes(b"x")
             self.assertTrue(any("absent from manifest" in x for x in verify(paths)))
             (paths.iso_dir / "extra.iso").unlink()

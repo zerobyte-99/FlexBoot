@@ -3,6 +3,26 @@
 ## A dependency is missing
 
 Run `python3 -m flexboot doctor`. It prints the likely Debian/Ubuntu package without installing it.
+Select `--for media` when only managing an existing drive. To preview and explicitly
+install missing packages, use `install --dependencies --dry-run`, then run that
+command with sudo and without dry-run. See [installation](INSTALLATION.md).
+
+## Pip reports an externally managed environment
+
+Use `sudo python3 -m flexboot install --system` for the isolated global command,
+or install with pip in a virtual environment. Do not automatically add
+`--break-system-packages` or remove Python's externally managed marker.
+
+## An installed command does not reflect source edits
+
+The global launcher uses an installed snapshot. Rerun `install --system` from the
+updated checkout. Use `command -v flexboot` to check which launcher your PATH selects.
+
+## Adding an existing ISO fails
+
+Identical content is skipped. A different image with the same name requires
+`add --replace`. If the installed file or manifest is inconsistent, verify the
+drive before proceeding; batch continuation does not bypass media errors.
 
 ## ISO inspection tools are absent
 

@@ -18,7 +18,7 @@ FlexBoot is a small Linux command-line tool for building and maintaining UEFI mu
 
 FlexBoot uses standard Linux utilities and the GNU GRUB supplied by the host distribution. Runtime operations do not download bootloaders, themes, scripts, or ISO images.
 
-**Development status:** There are unresolved safety bugs in mount cleanup, existing-image creation, and multi-disk ancestry protection. See [known safety issues](docs/SECURITY.md#known-safety-issues) before using writable operations; this version is published for development and is not recommended for production use.
+**Development status:** This version includes regression-tested fixes for mount cleanup, existing-image creation, and multi-disk ancestry protection. Physical-media validation is still required; review the [security limitations](docs/SECURITY.md#validation-limits) before using writable operations.
 
 ## Highlights
 
@@ -83,7 +83,7 @@ On Debian or Ubuntu, the usual packages are:
 ```bash
 sudo apt install \
   python3 fdisk dosfstools e2fsprogs util-linux \
-  grub-efi-amd64-bin grub-common xorriso
+  grub-efi-amd64-bin grub2-common udev xorriso
 ```
 
 FlexBoot checks for `lsblk`, `findmnt`, `sfdisk`, `wipefs`, `mkfs.fat`, `mkfs.ext4`, `losetup`, `mount`, and `grub-install`. ISO inspection prefers `xorriso` or `isoinfo` and includes a bounded read-only ISO 9660/Joliet reader when neither command is installed.
@@ -102,11 +102,47 @@ python3 -m flexboot doctor
 ### Install locally
 
 ```bash
-python3 -m pip install .
-flexboot --help
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/flexboot --help
 ```
 
-The checkout remains directly runnable, so pip is optional.
+Use pip inside a virtual environment. Distribution-managed Python installations
+may reject installation into system Python; FlexBoot does not need
+`--break-system-packages`.
+
+### Guided host setup and a global command
+
+```bash
+# Check requirements without changing anything
+python3 -m flexboot install
+
+# Preview missing packages and the optional global installation
+python3 -m flexboot install --dependencies --system --dry-run
+
+# Explicitly install missing distribution packages and the FlexBoot command
+sudo python3 -m flexboot install --dependencies --system
+
+# These work independently of the checkout directory
+flexboot --help
+sudo flexboot doctor
+```
+
+Automatic dependency installation supports Debian, Ubuntu, and Kali. The global
+command uses a root-owned, pip-free virtual environment under
+`/usr/local/lib/flexboot/releases/` and a launcher at `/usr/local/bin/flexboot`.
+It installs a snapshot of the current code and assets; rerun installation to
+update it. Ordinary runtime commands never install packages or download files.
+
+An existing drive can be managed without the host's EFI installation modules:
+
+```bash
+python3 -m flexboot doctor --for media
+sudo python3 -m flexboot install --for media --dependencies --system
+```
+
+See [installation](docs/INSTALLATION.md) for capability checks, package-manager
+behavior, custom prefixes, and recovery.
 
 ## Safe quick start
 
@@ -166,6 +202,19 @@ python3 -m flexboot add /dev/sdX *.iso --dry-run
 
 For each supported image, FlexBoot calculates SHA-256 while copying to a temporary destination, flushes it, atomically renames it, updates the manifest, regenerates the menu, and validates the GRUB syntax. The recorded hash checks later local integrity; compare downloads with vendor-published hashes or signatures to establish source authenticity.
 
+Identical installed images are skipped after checking their content. Different
+content with the same name requires explicit transactional replacement:
+
+```bash
+sudo flexboot add /dev/sdX updated.iso --replace
+sudo flexboot add /dev/sdX *.iso --continue-on-error --json
+```
+
+Batch adding reports added, replaced, skipped, failed, and unattempted files.
+Storage failures and media inconsistencies stop the batch even when continuation
+is enabled. Source-only add dry-runs do not check the target, installed duplicates,
+or available target space.
+
 ### 5. Inspect and verify
 
 ```bash
@@ -173,6 +222,8 @@ sudo python3 -m flexboot list /dev/sdX
 sudo python3 -m flexboot status /dev/sdX
 sudo python3 -m flexboot inspect /dev/sdX --json
 sudo python3 -m flexboot verify /dev/sdX
+# Faster structural check; does not hash ISO contents
+sudo python3 -m flexboot verify /dev/sdX --quick
 ```
 
 ## Media management
@@ -189,6 +240,8 @@ sudo python3 -m flexboot sync /dev/sdX
 ```
 
 `sync` stops if an unsupported ISO is present. Unsupported files never receive guessed boot entries.
+It also rejects changed integrity hashes rather than accepting same-size changes.
+Use `add --replace` with the intended source when deliberately updating an image.
 
 ## Themes and wallpapers
 
@@ -329,6 +382,7 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 | [ISO profiles](docs/ISO-PROFILES.md) | Supported layouts and profile development |
 | [Windows and other systems](docs/WINDOWS.md) | Boot requirements and extension options; Windows is not yet supported |
 | [Development](docs/DEVELOPMENT.md) | Local workflow and integration tests |
+| [Installation](docs/INSTALLATION.md) | Dependency setup and the global command |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common dependency, ISO, GRUB, and theme issues |
 | [Research](docs/RESEARCH.md) | Primary technical references |
 
