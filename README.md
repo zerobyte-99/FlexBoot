@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="branding/logo.png" width="128" alt="FlexBoot logo">
+  <img src="branding/logo.png" width="160" alt="FlexBoot logo: an amber boot-menu panel framed by folded light">
 </p>
 
 <h1 align="center">FlexBoot</h1>

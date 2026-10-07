@@ -39,7 +39,7 @@ def classic_background() -> bytes:
     return bytes(data)
 
 
-def logo() -> bytes:
+def classic_logo() -> bytes:
     width = height = 256
     data = bytearray(width * height * 4)
     amber = (217, 139, 58, 255)
@@ -109,14 +109,17 @@ def menu_piece(name: str) -> bytes:
 def main() -> None:
     assets = ROOT / "flexboot" / "assets"
     png(assets / "background-classic-grid.png", 1920, 1080, classic_background())
-    png(assets / "logo.png", 256, 256, logo(), channels=4)
+    png(assets / "logo-classic.png", 256, 256, classic_logo(), channels=4)
     for name in ("c", "n", "s", "e", "w", "nw", "ne", "sw", "se"):
         png(assets / f"select_{name}.png", 8, 8, selection_piece(name), channels=4)
         png(assets / f"menu_{name}.png", 20, 20, menu_piece(name), channels=4)
     (ROOT / "branding" / "background-classic-grid.png").write_bytes(
         (assets / "background-classic-grid.png").read_bytes()
     )
-    (ROOT / "branding" / "logo.png").write_bytes((assets / "logo.png").read_bytes())
+    (ROOT / "branding" / "logo-classic.png").write_bytes((assets / "logo-classic.png").read_bytes())
+    # The default menu/fold mark is a shipped artwork asset, not the legacy F.
+    # Preserve replacements made in branding when regenerating code-drawn UI.
+    (assets / "logo.png").write_bytes((ROOT / "branding" / "logo.png").read_bytes())
 
 
 if __name__ == "__main__":

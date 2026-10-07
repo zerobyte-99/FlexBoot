@@ -32,14 +32,17 @@ The exact values should live in one branding configuration rather than being sca
 
 ### Logo concept
 
-Create an original geometric mark.
+The default mark combines a compact boot-options panel with the amber folded-light
+geometry of Quantum Fold. A highlighted boot row and three pale option bars make
+the menu recognizable at small sizes. Graphite glass, warm amber, and silver link
+the icon to the actual GRUB screen. The outside of the rounded-square badge is
+transparent; there are no tiny labels or distribution logos.
 
-Good conceptual directions:
-
-- a stylized `F` built from boot/branch geometry;
-- a flexible path/switch motif;
-- two paths merging into one boot arrow;
-- a clean abstract boot-media symbol.
+`branding/logo.png` is the canonical artwork. Its shipped runtime copy is
+`flexboot/assets/logo.png`. Replace the canonical file and run
+`python3 tools/generate_assets.py` to synchronize that copy. The asset generator
+preserves the default mark while regenerating the classic F as `logo-classic.png`.
+Both classic copies remain available for anyone who prefers the earlier mark.
 
 Avoid:
 

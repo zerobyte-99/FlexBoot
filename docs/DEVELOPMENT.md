@@ -22,7 +22,12 @@ sudo python3 -m flexboot image inspect ./out/flexboot.img
 
 Inspect active loops afterward with `losetup --list`. QEMU validation uses `python3 -m flexboot image boot ./out/flexboot.img`; hardware acceleration is not required.
 
-Regenerate the code-drawn logo, selection graphics, and Classic Grid background with `python3 tools/generate_assets.py`. This script uses only zlib and PNG primitives from the standard library and preserves the generated background variants.
+Regenerate the classic F logo, selection graphics, and Classic Grid background with
+`python3 tools/generate_assets.py`. The script uses only zlib and PNG primitives
+from the standard library and preserves the generated background variants. The
+default menu/fold logo is shipped artwork: the script preserves
+`branding/logo.png` and synchronizes its runtime copy rather than replacing it
+with the classic F.
 
 ## Boot-menu screenshots
 
