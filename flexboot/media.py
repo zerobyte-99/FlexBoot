@@ -12,6 +12,7 @@ from pathlib import Path
 
 from . import __version__
 from .branding import BRAND
+from .boot_paths import alias_problems, ensure_aliases, iso_boot_path, remove_alias, rollback_aliases
 from .errors import DependencyError, FlexBootError, MediaStateError, SafetyError
 from .grub import atomic_text, base_config, generated_config, validate_config
 from .iso import require_supported, validate_filename
@@ -223,10 +224,15 @@ def deploy_theme(efi: Path, background: Path | None = None, layout: str = "flexb
 def regenerate(paths: MediaPaths, manifest: Manifest, runner: Runner | None = None) -> None:
     destination = paths.grub_dir / "generated.cfg"
     candidate = destination.with_name("generated.cfg.new")
+    created_aliases = []
     try:
         atomic_text(candidate, generated_config(manifest.isos))
         validate_config(candidate, runner)
+        created_aliases = ensure_aliases(paths.data, (item.filename for item in manifest.isos))
         os.replace(candidate, destination)
+    except BaseException:
+        rollback_aliases(created_aliases)
+        raise
     finally:
         candidate.unlink(missing_ok=True)
 
@@ -358,6 +364,7 @@ def remove_iso(paths: MediaPaths, filename: str, runner: Runner | None = None) -
         manifest.isos = original_records
         manifest.save(paths.manifest)
         raise
+    remove_alias(paths.data, filename)
 
 
 def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
@@ -383,6 +390,7 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
     preserve_recovery = False
     font_published = False
     font = paths.grub_dir / "fonts/unicode.pf2"
+    created_aliases = []
     try:
         stage = MediaPaths(work, paths.data)
         if font.is_file():
@@ -393,6 +401,7 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
         for name, text in (("grub.cfg", base_config(old.data_filesystem_uuid)), ("generated.cfg", generated_config(old.isos))):
             atomic_text(stage.grub_dir / name, text)
             validate_config(stage.grub_dir / name, runner)
+        created_aliases = ensure_aliases(paths.data, (item.filename for item in old.isos))
         if theme.exists():
             os.replace(theme, saved_theme)
         theme.parent.mkdir(parents=True, exist_ok=True)
@@ -417,6 +426,7 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
                     path.unlink(missing_ok=True)
                 else:
                     atomic_text(path, text)
+            rollback_aliases(created_aliases)
         except BaseException as rollback:
             preserve_recovery = True
             raise MediaStateError(f"Sync rollback failed; preserve recovery files at {work}: {rollback}") from original
@@ -458,6 +468,7 @@ def verify(paths: MediaPaths, *, full_hash: bool = True) -> list[str]:
                     problems.append(f"Detected ISO boot profile differs from manifest: {record.filename}")
             except (FlexBootError, OSError) as exc:
                 problems.append(f"Cannot verify ISO profile for {record.filename}: {exc}")
+    problems.extend(alias_problems(paths.data, (item.filename for item in manifest.isos)))
     generated = paths.grub_dir / "generated.cfg"
     expected = generated_config(manifest.isos)
     if not generated.exists() or generated.read_text(encoding="utf-8") != expected:
@@ -496,7 +507,8 @@ def inspect(paths: MediaPaths, *, full_hash: bool = False) -> dict[str, object]:
         "bootloader": str(paths.efi / "EFI" / "BOOT" / "BOOTX64.EFI"),
         "bootloader_present": (paths.efi / "EFI" / "BOOT" / "BOOTX64.EFI").is_file(),
         "isos": [
-            {**asdict(item), "actual_sha256": sha256_file(paths.iso_dir / item.filename) if full_hash and (paths.iso_dir / item.filename).is_file() else None}
+            {**asdict(item), "boot_iso_path": iso_boot_path(item.filename),
+             "actual_sha256": sha256_file(paths.iso_dir / item.filename) if full_hash and (paths.iso_dir / item.filename).is_file() else None}
             for item in manifest.isos
         ],
         "theme": theme_setting(paths),

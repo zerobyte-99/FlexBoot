@@ -115,7 +115,49 @@ USB. An intact-ISO design must also solve source storage, ISO mounting in WinPE,
 and lifecycle after firmware handoff. It may require Windows-readable storage and
 prepared WinPE startup logic, which expands the dependency and audit surface.
 
-## Validation requirements
+## Recommended next experiment (2026-10-09)
+
+Keep the Linux backend stable and build a separate, opt-in Windows preparation
+backend. Start with one native installer on disposable FAT32 media. Establish
+that Setup can read its payload and install onto a separate disposable virtual
+disk before attempting multiple installers or a loader bridge.
+
+| Route | Advantage | Unresolved cost |
+|---|---|---|
+| Native Microsoft loader + BCD menu | Standard Windows boot flow, multiple WinPE entries | Second menu; reliable BCD preparation from a Linux host |
+| Per-entry WIM-aware bridge | Could retain one visible GRUB menu | Local UEFI handoff, selected-image transfer, and an additional audited runtime |
+| One shared WinPE dispatcher | Simple common boot environment | Second selection step and deliberate cross-version Setup compatibility testing |
+| Intact ISO on Windows-readable storage | Retains original images | WinPE ISO mounting, payload visibility, and larger boot/storage changes |
+
+`wimlib` can prepare WIM content and split installation images; it is not a BCD
+editor or a GRUB-to-WinPE boot bridge. Native BCD authoring is therefore a separate
+Linux-host design problem, even before choosing a single-menu implementation.
+
+The [wimboot documentation](https://ipxe.org/wimboot#injected_files) describes
+injected startup files inside WinPE and selection of a WIM's bootable index. That
+makes it a candidate for passing a per-image startup script without writing a
+persistent selection marker to USB. Its documented iPXE examples do not establish
+that stock host-provided GRUB can supply the equivalent local UEFI file handoff.
+Test that boundary separately. If it needs a new runtime, require an explicit,
+auditable optional installation and document how it is built/provided; never
+silently download or bundle it into the normal Linux boot path.
+
+Then test two installers in separate directories on one shared FAT32 partition.
+Each must select its matching PE/Setup resources and explicitly pass the intended
+WIM or first SWM part using Microsoft's documented
+[`/InstallFrom`](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options?view=windows-11#installfrom).
+Keep every SWM part together, discover drive letters at runtime, and fail if media
+identity or image selection is ambiguous. An extracted installer larger than
+FAT32's per-file limit needs WIM splitting or a reviewed alternative filesystem;
+do not split arbitrary files or assume ESD conversion is lossless.
+
+The first proof should use QEMU/OVMF, no network or physical disks, and a separate
+disposable installation disk. Verify both sources, including a deliberately missing
+payload, and ensure selecting one cannot start the other. No Windows ISO was
+provided for this pass, so this review has not tested Windows Boot Manager,
+WinPE startup, BCD preparation, or Setup. Windows support remains unimplemented.
+
+## Acceptance checks
 
 Before advertising Windows support:
 

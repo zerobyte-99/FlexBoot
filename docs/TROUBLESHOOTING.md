@@ -55,3 +55,17 @@ Secure Boot is outside the MVP. Disable it for this media. FlexBoot does not cla
 ## QEMU cannot start
 
 Install `qemu-system-x86` and `ovmf`, or validate on hardware. The QEMU check is optional and is reported as skipped when those tools are unavailable.
+## Source ISO diagnostics and filenames
+
+Use `flexboot profiles` and `flexboot iso inspect FILE.iso --json` before attaching
+media. These commands need no root or USB target. A matching profile identifies a
+boot recipe, not hardware validation for every release. Multiple versioned Debian
+kernel pairs, missing Casper root layers, and older Gentoo genkernel media are
+rejected rather than guessed.
+
+After upgrading FlexBoot, run `sudo flexboot sync /dev/sdX` on the reviewed target
+to refresh stored boot plans, menus, and filename aliases. Names with spaces or
+special characters retain their original ISO file and use checked links under
+`.flexboot/boot-isos/` at boot. A conflicting link or symlinked alias directory is
+an error: inspect the discrepancy rather than replacing arbitrary files. `verify`
+checks the required alias targets, and `inspect --json` exposes boot paths.

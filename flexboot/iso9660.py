@@ -117,5 +117,17 @@ class ISO9660Reader:
     def read(self, entry: Entry, maximum: int = 256 * 1024) -> str:
         if entry.directory or entry.size > maximum:
             return ""
+        return self.read_prefix(entry, entry.size).decode("utf-8", "replace")
+
+    def read_prefix(self, entry: Entry, maximum: int = 1024) -> bytes:
+        """Read bounded metadata without extracting or executing image content."""
+        if entry.directory or maximum < 0:
+            return b""
+        count = min(entry.size, maximum)
+        if entry.extent * SECTOR + entry.size > self.path.stat().st_size:
+            raise FlexBootError("ISO file extent is outside the image")
         self._handle.seek(entry.extent * SECTOR)
-        return self._handle.read(entry.size).decode("utf-8", "replace")
+        result = self._handle.read(count)
+        if len(result) != count:
+            raise FlexBootError("Truncated ISO file extent")
+        return result

@@ -36,3 +36,64 @@ Primary and project-maintained sources reviewed on 2026-09-30:
 See [Windows and other boot families](WINDOWS.md) for the implications for FlexBoot.
 No Ventoy source, scripts, binaries, or plugins have been copied, adapted,
 downloaded, or executed. FlexBoot has no Ventoy runtime dependency.
+
+## Compatibility expansion, 2026-10-09
+
+- [Grml cheatcodes](https://grml.org/cheatcodes/) document `findiso=`, the required
+  `live-media-path=`, and the matching boot ID. Grml's
+  [loopback configuration](https://github.com/grml/grml-live/blob/master/config/media-files/GRMLBASE/boot/grub/loopback.cfg)
+  sources its main configuration using GRUB's prefix. FlexBoot instead uses its
+  own direct Linux entry with Grml's documented parameters.
+- [Gentoo installation alternatives](https://wiki.gentoo.org/wiki/Installation_alternatives)
+  describe legacy genkernel ISO booting. The current official amd64 minimal image
+  instead contains dracut and `iso-scan` in its initramfs, and declares a CDLABEL
+  live root plus `rd.live.squashimg=image.squashfs` in its own GRUB configuration.
+  Only that current mechanism is implemented.
+- [Casper's manual](https://manpages.ubuntu.com/manpages/focal/man7/casper.7.html)
+  documents `layerfs-path=`. Its
+  [source](https://git.launchpad.net/casper/tree/scripts/casper) derives dotted
+  parent layers and aborts when one is missing; detection now requires the full
+  hierarchy rather than merely a manifest or leaf file.
+- [Linux x86 boot protocol](https://docs.kernel.org/arch/x86/boot.html)
+  defines `HdrS`, protocol version, and `xloadflags` bit 0. Bounded header reads
+  reject known 32-bit kernels without treating unrecognized headers as verified
+  architecture.
+- [Alpine's direct ISO boot instructions](https://wiki.alpinelinux.org/wiki/Directly_booting_an_ISO_file)
+  describe an initramfs recovery path with manual ISO mounting. Its current
+  [initramfs source](https://gitlab.alpinelinux.org/alpine/mkinitfs/-/blob/master/initramfs-init.in)
+  does not provide a demonstrated equivalent to Debian's `findiso=` mechanism.
+  Alpine support is deferred.
+- Windows references above were revisited. Microsoft's
+  [Setup command-line reference](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options?view=windows-11#installfrom)
+  documents WIM and first-part SWM selection. iPXE's
+  [wimboot injected-files interface](https://ipxe.org/wimboot#injected_files)
+  offers a possible per-image WinPE startup mechanism; local GRUB/UEFI handoff
+  remains an untested design boundary. See the experiment plan in `WINDOWS.md`.
+
+### Real ISO boot evidence
+
+Grml small 2026.09 amd64 reached `grml login:` and Gentoo minimal
+20260913T163055Z reached `livecd login:` under QEMU/OVMF software emulation.
+Both also reached login with spaced filenames through checked boot aliases.
+Each intact ISO was stored on disposable ext4 media. No physical disks, host
+mounts, networking, or virtual optical drives were used. The host's standalone
+GRUB loader ran production generated entries with serial-console instrumentation
+and automated menu selection. This validates ISO rediscovery into userspace, not physical
+hardware or the full GPT/grub-install builder.
+
+A real Grml image with spaces in its filename exposed two distinct failures:
+unquoted GRUB variable expansion split the loopback path, and Grml's initramfs
+`Cmdline_old` split quoted kernel arguments again. Quoting the renderer fixes the
+first issue; checked boot-path symlinks avoid the second without changing the
+vendor initramfs or duplicating ISO data. The reusable helper waits for an explicit
+GRUB readiness marker before sending Enter; a failed test preserves logs and
+screenshots and returns a failure status.
+
+Grml's SHA-256 was
+`81062142e320b158dcac541506e74e1b4d77f409e72bf7ef52820fc881d72c33`, matching
+the [publisher's checksum list](https://ftp-master.grml.org/SHA256SUMS-2026.09).
+Gentoo's SHA-512 was
+`7bc150d92d330d90135683e8b430e03fde7f7284e8d868923ebf66b0f94c2b77a0ae9db51696e51704ed0a05769c31939bf26cf7af96a3829608ab2479519047`,
+matching its [official DIGESTS file](https://distfiles.gentoo.org/releases/amd64/autobuilds/20260913T163055Z/install-amd64-minimal-20260913T163055Z.iso.DIGESTS).
+These were publisher checksum comparisons over HTTPS; OpenPGP signatures were
+not verified during this pass.

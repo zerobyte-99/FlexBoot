@@ -1,6 +1,7 @@
 import unittest
 
 from flexboot.grub import base_config, generated_config, grub_quote
+from flexboot.boot_paths import iso_boot_path
 from flexboot.manifest import ISORecord
 
 
@@ -10,7 +11,10 @@ class GrubTests(unittest.TestCase):
 
     def test_spaces_and_deterministic_sort(self):
         output = generated_config([self.record("z.iso"), self.record("Kali Live.iso")])
-        self.assertIn("set iso_path='/iso/Kali Live.iso'", output)
+        self.assertIn(f"set iso_path='{iso_boot_path('Kali Live.iso')}'", output)
+        self.assertNotIn("set iso_path='/iso/Kali Live.iso'", output)
+        self.assertIn('loopback loop "($flexboot_data)$iso_path"', output)
+        self.assertIn('findiso="${iso_path}"', output)
         self.assertLess(output.index("Kali Live.iso"), output.index("z.iso"))
         self.assertEqual(output, generated_config([self.record("z.iso"), self.record("Kali Live.iso")]))
 
@@ -35,13 +39,13 @@ class GrubTests(unittest.TestCase):
     def test_multiple_profiles(self):
         ubuntu = ISORecord("ubuntu.iso", 1, "b" * 64, "ubuntu-casper", "/casper/vmlinuz", "/casper/initrd")
         output = generated_config([ubuntu, self.record()])
-        self.assertIn("iso-scan/filename=${iso_path}", output)
-        self.assertIn("findiso=${iso_path}", output)
+        self.assertIn('iso-scan/filename="${iso_path}"', output)
+        self.assertIn('findiso="${iso_path}"', output)
 
     def test_ubuntu_server_arguments_match_image_loopback_configuration(self):
         server = ISORecord("ubuntu-server.iso", 1, "c" * 64, "ubuntu-server-casper", "/casper/vmlinuz", "/casper/initrd")
         output = generated_config([server])
-        self.assertIn("linux (loop)/casper/vmlinuz iso-scan/filename=${iso_path} ---", output)
+        self.assertIn('linux (loop)/casper/vmlinuz iso-scan/filename="${iso_path}" ---', output)
         self.assertNotIn("boot=casper", output)
 
     def test_loopback_config_boot_plan(self):

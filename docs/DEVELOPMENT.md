@@ -57,3 +57,34 @@ its matching `OVMF_VARS_4M.fd` must be alongside it. `--qemu` and `--qemu-data`
 support a local QEMU executable and ROM directory. Use `--wait 30` on slower hosts.
 The output must be a new file. Inspect it visually before replacing the README
 image at `docs/images/boot-menu.png`.
+
+## Real ISO boot tests without root
+
+Supply an ISO you have obtained and checked against its publisher's checksum:
+
+```bash
+python3 tools/test_iso_boot.py ./grml-small.iso ./out/grml-test \
+  --expect 'grml login:'
+python3 tools/test_iso_boot.py ./gentoo.iso ./out/gentoo-test \
+  --expect 'livecd login:' --timeout 300
+```
+
+Requires the same host tools as the screenshot helper. It uses production ISO
+inspection, copy, metadata, theme, and menu generation, then adds a serial console
+solely for the test and selects the first menu entry through QEMU's keyboard.
+Host GRUB creates a standalone removable
+EFI loader; `mkfs.ext4 -d` populates a disposable regular-file filesystem containing
+the intact ISO. QEMU has no network, physical disks, or CD-ROM. Data-disk writes use
+temporary snapshots. No host mounts, loop attachments, or elevated privileges are
+needed. Temporary media and private firmware variables are cleaned up even when
+QEMU fails. Allow several GiB of temporary disk space and 1.5 GiB guest memory.
+
+The output directory must be new. It retains serial/QEMU logs, the tested GRUB
+configuration, and a screenshot. Exit status is nonzero on timeout, kernel panic,
+or QEMU failure. Choose a distro-specific userspace/login marker; an early kernel
+message would produce a misleading success. Vendor loopback submenus require
+manual testing and are excluded from this helper. Firmware/QEMU override options
+are the same as the screenshot helper.
+
+This verifies ISO rediscovery through the initramfs into userspace. It does not
+replace the privileged full-GPT `grub-install` integration test or hardware tests.

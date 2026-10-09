@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .base import BootPlan, ISOInspection, ProfileMatch
+from .resources import live_kernel_pair
 
 
 class ClonezillaProfile:
@@ -11,9 +12,8 @@ class ClonezillaProfile:
         paths = inspection.paths
         if "/Clonezilla-Live-Version" not in paths:
             return None
-        kernels = sorted(path for path in paths if path.startswith("/live/vmlinuz"))
-        initrds = sorted(path for path in paths if path.startswith("/live/initrd"))
-        if not kernels or not initrds or "/live/filesystem.squashfs" not in paths:
+        pair = live_kernel_pair(paths)
+        if not pair or "/live/filesystem.squashfs" not in paths:
             return None
         args = (
             "boot=live config components union=overlay findiso=${iso_path} noswap edd=on "
@@ -21,4 +21,4 @@ class ClonezillaProfile:
             "ocs_live_run=ocs-live-general ocs_live_batch=no"
         )
         return ProfileMatch(self.profile_id, self.description,
-                            BootPlan("linux", kernels[0], (initrds[0],), args))
+                            BootPlan("linux", pair[0], (pair[1],), args))

@@ -25,7 +25,7 @@ FlexBoot uses standard Linux utilities and the GNU GRUB supplied by the host dis
 - Strong wrong-disk protection, including system-disk detection and identity revalidation.
 - GPT media with a dedicated FAT32 EFI partition and ext4 ISO storage.
 - Intact ISO files under `/iso`; adding an image does not rebuild the drive.
-- Explicit profiles for Ubuntu, Debian/Kali Live, SystemRescue, Arch, Rescuezilla, Clonezilla, and Fedora Live.
+- Explicit profiles for Ubuntu, Debian/Kali Live, SystemRescue, Arch, Rescuezilla, Clonezilla, Fedora Live, Grml, and current Gentoo Live.
 - Transactional ISO copies, SHA-256 integrity records, and generated-menu verification.
 - Two selectable GRUB layouts and four original wallpapers, plus custom PNG support.
 - Raw-image creation for safer development and optional QEMU/OVMF testing.
@@ -57,7 +57,7 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 
 | Family | Detection and boot method | Current validation |
 |---|---|---|
-| Ubuntu desktop/live | Casper kernel, initrd, and live filesystem; `iso-scan/filename=` | Profile tests |
+| Ubuntu desktop/live | Casper kernel, initrd, and live filesystem; complete layered roots also recognized | Profile tests; layered desktop hardware pending |
 | Ubuntu Server | Current casper server layout and server loopback arguments | Real ISO and hardware boot |
 | Debian Live / Kali Live | Debian live filesystem; `findiso=` | Profile tests |
 | SystemRescue | Product layout and vendor `loopback.cfg` | Profile tests; hardware pending |
@@ -65,8 +65,23 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 | Rescuezilla | Product marker plus casper resources | Publisher hash and real-image inspection; hardware pending |
 | Clonezilla Live | Product marker plus Debian Live resources | Publisher hash and real-image inspection; hardware pending |
 | Fedora Live | LiveOS, volume label, and dracut loader resources | Publisher hash and Fedora 44 inspection; hardware pending |
+| Grml amd64 | Matching flavour resources and boot ID; live-boot `findiso=` | Grml small 2026.09 QEMU login; hardware pending |
+| Gentoo amd64 Live | Current dracut layout and matching live-root label | Minimal 20260913 QEMU login; hardware pending |
 
 FlexBoot rejects incomplete and unknown layouts instead of producing speculative menu entries. Installer-only Kali images and Fedora network installers do not match the live profiles.
+
+Inspect a source image without root or a USB target:
+
+```bash
+python3 -m flexboot profiles
+python3 -m flexboot iso inspect "Grml with spaces.iso" --json
+```
+
+Detection validates a boot recipe; it is not a guarantee for every release or
+machine. Known 32-bit Linux kernels are rejected. Ambiguous versioned Debian
+kernel/initrd pairs, missing Casper layers, legacy Gentoo genkernel images, and
+Alpine ISO loopback boot remain unsupported. Grml and Gentoo were booted as intact
+files on disposable ext4 QEMU media, without physical disks or a virtual CD-ROM.
 
 See [ISO profiles](docs/ISO-PROFILES.md) for the exact rules and extension interface.
 
@@ -202,6 +217,12 @@ python3 -m flexboot add /dev/sdX *.iso --dry-run
 
 For each supported image, FlexBoot calculates SHA-256 while copying to a temporary destination, flushes it, atomically renames it, updates the manifest, regenerates the menu, and validates the GRUB syntax. The recorded hash checks later local integrity; compare downloads with vendor-published hashes or signatures to establish source authenticity.
 
+Original filenames are retained. Names containing spaces, quotes, or other
+special characters receive a checked symlink under `.flexboot/boot-isos/` with a
+safe, deterministic name. GRUB and the initramfs use that boot path, so vendor
+parsers do not have to interpret the original filename. No second ISO copy is
+stored. `verify` checks these links; `remove` removes the matching owned link.
+
 Identical installed images are skipped after checking their content. Different
 content with the same name requires explicit transactional replacement:
 
@@ -319,6 +340,7 @@ USB drive
     ├── iso/
     └── .flexboot/
         ├── manifest.json
+        ├── boot-isos/          # links for special filenames, when needed
         ├── theme.json
         ├── install.json
         └── version

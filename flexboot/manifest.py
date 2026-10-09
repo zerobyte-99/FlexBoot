@@ -96,7 +96,8 @@ class Manifest:
                 validate_filename(record.filename)
                 if type(record.size) is not int or record.size < 0 or not isinstance(record.sha256, str) or not re.fullmatch("[0-9a-f]{64}", record.sha256):
                     raise ValueError("invalid size or SHA-256")
-                if record.profile not in {"ubuntu-casper", "ubuntu-server-casper", "debian-live", "clonezilla-live", "rescuezilla", "fedora-live", "systemrescue", "archiso"}:
+                from .profiles import known_profile_ids
+                if record.profile not in known_profile_ids():
                     raise ValueError("unknown boot profile")
                 if not all(isinstance(value, str) for value in (record.filename, record.kernel, record.initrd, record.boot_kind, record.boot_args, record.configfile)) or type(record.remove_tpm_module) is not bool:
                     raise ValueError("invalid boot record types")

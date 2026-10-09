@@ -11,6 +11,7 @@ class ISOInspection:
     paths: frozenset[str]
     volume_id: str | None = None
     text_files: Mapping[str, str] = field(default_factory=dict)
+    kernel_architectures: Mapping[str, str] = field(default_factory=dict)
 
     def combined_text(self) -> str:
         return "\n".join(self.text_files.values())

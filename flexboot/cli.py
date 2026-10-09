@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from dataclasses import asdict
 from pathlib import Path
 
 from . import __version__
@@ -12,7 +13,8 @@ from .devices import Device, discover, find_device, format_size
 from .disk import assert_loop_target
 from .doctor import PROFILES as CAPABILITIES, diagnose, preflight
 from .errors import CleanupError, FlexBootError
-from .iso import require_supported
+from .iso import inspect_iso, require_supported
+from .profiles import PROFILES as ISO_PROFILES, supported_descriptions
 from .media import (
     batch_add, available_layouts, available_themes, inspect as inspect_media, remove_iso,
     resolve_builtin_theme, resolve_theme_layout, set_theme, sync as sync_media,
@@ -35,6 +37,13 @@ def parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(prog="flexboot", description=f"{BRAND.product_name} — {BRAND.tagline}")
     root.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     commands = root.add_subparsers(dest="command", required=True)
+    profiles = commands.add_parser("profiles", help="list supported ISO boot families")
+    _add_output_options(profiles)
+    iso = commands.add_parser("iso", help="read-only source ISO diagnostics")
+    iso_commands = iso.add_subparsers(dest="iso_command", required=True)
+    iso_inspect = iso_commands.add_parser("inspect", help="inspect source contents and the selected boot recipe")
+    iso_inspect.add_argument("path", type=Path)
+    _add_output_options(iso_inspect)
     doctor = commands.add_parser("doctor", help="check host dependencies")
     doctor.add_argument("--for", dest="profile", choices=CAPABILITIES, default="create", help="capability to check (default: create)")
     _add_output_options(doctor)
@@ -406,6 +415,26 @@ def boot_image(args: argparse.Namespace) -> int:
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    if args.command == "profiles":
+        payload = [{"id": profile.profile_id, "description": profile.description} for profile in ISO_PROFILES]
+        print(json.dumps(payload, indent=2) if args.json else "\n".join(f"{item['id']}: {item['description']}" for item in payload))
+        return 0
+    if args.command == "iso":
+        facts, match = inspect_iso(args.path, Runner(verbose=args.verbose))
+        payload = {"file": str(args.path), "volume_id": facts.volume_id, "supported": bool(match),
+                   "profile": match.profile if match else None, "boot": asdict(match.boot) if match else None,
+                   "kernel_architectures": dict(facts.kernel_architectures),
+                   "characteristics": sorted(path for path in facts.paths if path.count("/") <= 2)[:40],
+                   "supported_families": supported_descriptions()}
+        if args.json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"ISO: {args.path}\nVolume: {facts.volume_id or 'unknown'}\nProfile: {match.description if match else 'unsupported layout'}")
+            if match:
+                print(json.dumps(payload["boot"], indent=2))
+            else:
+                print("No supported boot recipe matched. Rename alone cannot add support.\nSupported families:\n  " + "\n  ".join(payload["supported_families"]))
+        return 0 if match else 2
     if args.command == "install":
         from .installer import run_install
         return run_install(args)
