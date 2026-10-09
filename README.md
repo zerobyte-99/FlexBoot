@@ -402,7 +402,7 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 | [Architecture](docs/ARCHITECTURE.md) | Components, boundaries, and data flow |
 | [Security](docs/SECURITY.md) | Wrong-disk protections and threat model |
 | [ISO profiles](docs/ISO-PROFILES.md) | Supported layouts and profile development |
-| [Windows and other systems](docs/WINDOWS.md) | Boot requirements and extension options; Windows is not yet supported |
+| [Windows and other systems](docs/WINDOWS.md) | Boot requirements, [real Windows 10/11 experiments](docs/WINDOWS-EXPERIMENTS.md), and extension options; Windows is not yet supported |
 | [Development](docs/DEVELOPMENT.md) | Local workflow and integration tests |
 | [Installation](docs/INSTALLATION.md) | Dependency setup and the global command |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common dependency, ISO, GRUB, and theme issues |

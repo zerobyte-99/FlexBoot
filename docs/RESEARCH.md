@@ -68,7 +68,8 @@ downloaded, or executed. FlexBoot has no Ventoy runtime dependency.
   documents WIM and first-part SWM selection. iPXE's
   [wimboot injected-files interface](https://ipxe.org/wimboot#injected_files)
   offers a possible per-image WinPE startup mechanism; local GRUB/UEFI handoff
-  remains an untested design boundary. See the experiment plan in `WINDOWS.md`.
+  was an untested design boundary before the lab comparison recorded below.
+  See `WINDOWS-EXPERIMENTS.md` for the subsequent results.
 
 ### Real ISO boot evidence
 
@@ -97,3 +98,22 @@ Gentoo's SHA-512 was
 matching its [official DIGESTS file](https://distfiles.gentoo.org/releases/amd64/autobuilds/20260913T163055Z/install-amd64-minimal-20260913T163055Z.iso.DIGESTS).
 These were publisher checksum comparisons over HTTPS; OpenPGP signatures were
 not verified during this pass.
+
+## Windows loader lab, 2026-10-09
+
+- [NTloader](https://github.com/grub4dos/ntloader) and its
+  [menu guide](https://github.com/grub4dos/ntloader/blob/master/docs/menu.md)
+  document WIM selection through a stock-GRUB handoff and boot volume identity.
+- Microsoft's [OpenVirtualDisk](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-openvirtualdisk)
+  and [AttachVirtualDisk](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-attachvirtualdisk)
+  define the native ISO API tested in stock Windows 10/11 WinPE.
+- [Winpeshl.ini](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpeshlini-reference-launching-an-app-when-winpe-starts?view=windows-11)
+  defines startup application injection into a prepared WinPE image.
+- [ImDisk](https://github.com/LTRData/ImDisk), the official signed 2.1.2 package,
+  and [GRUB2 File Manager](https://github.com/a1ive/grub2-filemanager) were compared
+  in disposable guests. iPXE wimboot was built from source and its direct
+  stock-GRUB handoff was attempted; the documented iPXE network route was not.
+
+See [actual results, pinned revisions and limitations](WINDOWS-EXPERIMENTS.md).
+NTloader plus native ISO attachment is preferred for a future optional backend.
+No Ventoy dependency was introduced and no downloaded runtime is shipped.

@@ -4,6 +4,11 @@ Windows installer ISO boot is currently unsupported. This document explains the
 boot requirements and the available extension paths; it does not describe an
 implemented Windows feature.
 
+The [Windows loader experiments](WINDOWS-EXPERIMENTS.md) now record real Windows
+10/11 WinPE, ISO mounting and Setup tests. NTloader plus the native Windows ISO
+API is the selected direction for an optional backend; ordinary CLI Windows ISO
+installation remains unsupported.
+
 ## Why a Linux-style entry is insufficient
 
 GRUB can read an ISO stored on ext4, but that does not make the ISO available to
@@ -115,7 +120,11 @@ USB. An intact-ISO design must also solve source storage, ISO mounting in WinPE,
 and lifecycle after firmware handoff. It may require Windows-readable storage and
 prepared WinPE startup logic, which expands the dependency and audit surface.
 
-## Recommended next experiment (2026-10-09)
+## Initial experiment plan (2026-10-09)
+
+The plan below preceded the lab comparison. See
+[the results and selected direction](WINDOWS-EXPERIMENTS.md) for what has now
+been verified and the remaining implementation checks.
 
 Keep the Linux backend stable and build a separate, opt-in Windows preparation
 backend. Start with one native installer on disposable FAT32 media. Establish
@@ -153,9 +162,10 @@ do not split arbitrary files or assume ESD conversion is lossless.
 
 The first proof should use QEMU/OVMF, no network or physical disks, and a separate
 disposable installation disk. Verify both sources, including a deliberately missing
-payload, and ensure selecting one cannot start the other. No Windows ISO was
-provided for this pass, so this review has not tested Windows Boot Manager,
-WinPE startup, BCD preparation, or Setup. Windows support remains unimplemented.
+payload, and ensure selecting one cannot start the other. The subsequent lab
+pass used user-supplied Windows 10 and 11 ISOs and tested
+WinPE, ISO mounting and Setup. Full installation and physical USB compatibility
+remain unverified, and Windows support remains unimplemented in the CLI.
 
 ## Acceptance checks
 
