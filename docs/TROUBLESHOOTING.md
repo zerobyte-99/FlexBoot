@@ -69,3 +69,27 @@ special characters retain their original ISO file and use checked links under
 `.flexboot/boot-isos/` at boot. A conflicting link or symlinked alias directory is
 an error: inspect the discrepancy rather than replacing arbitrary files. `verify`
 checks the required alias targets, and `inspect --json` exposes boot paths.
+
+
+## Windows preparation or boot fails
+
+Run `flexboot doctor --for windows`. Windows creation requires a local audited
+NTloader, its expected SHA-256, a locally built helper, an NTFS reserve, and the
+explicit `--windows-boot-layout basic-fat` option. Host GRUB must be >=2.12 with
+the x86-64 EFI NTFS module. An ESD-based image is currently rejected; use a
+supported WIM-based source. Replacement needs room for staged resources.
+
+A Windows-enabled USB requires firmware that boots FAT without the ESP GUID.
+OVMF success is not proof of physical firmware support. Secure Boot must be
+disabled, and Windows 11's normal hardware requirements still apply.
+
+In WinPE, startup details are in `X:\Windows\Temp\flexboot.log`; native Setup
+logs are under `X:\Windows\Panther`. Zero or multiple source markers stop the
+startup layer. Keep the selected USB attached throughout image application.
+After Setup reboots, select the installed destination's Windows Boot Manager
+instead of starting the USB installer again.
+
+Use `verify` before changing state. `sync` repairs stale generated menus but
+refuses changed runtimes, ISO/WIM resources, or interrupted preparation directories.
+Review those reported files and preserve backups before manual recovery; do not
+edit integrity records merely to suppress an error.

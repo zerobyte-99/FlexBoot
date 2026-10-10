@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import platform
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -13,6 +14,8 @@ PACKAGES = {
     "python3": "python3", "lsblk": "util-linux", "findmnt": "util-linux",
     "sfdisk": "fdisk", "wipefs": "util-linux", "blockdev": "util-linux",
     "mkfs.fat": "dosfstools", "mkfs.ext4": "e2fsprogs", "blkid": "util-linux",
+    "7z": "7zip", "wimlib-imagex": "wimtools", "mkfs.ntfs": "ntfs-3g",
+    "ntfs-3g": "ntfs-3g",
     "losetup": "util-linux", "mount": "mount", "umount": "mount",
     "udevadm": "udev", "grub-install": "grub2-common",
     "grub-script-check": "grub2-common", "xorriso": "xorriso",
@@ -22,6 +25,7 @@ DISCOVERY = ("lsblk", "findmnt")
 MEDIA = (*DISCOVERY, "blkid", "mount", "umount")
 CREATE = (*MEDIA, "sfdisk", "wipefs", "blockdev", "mkfs.fat", "mkfs.ext4", "udevadm", "grub-install")
 PROFILES = {"discovery": DISCOVERY, "media": MEDIA, "create": CREATE,
+            "windows": (*MEDIA, "7z", "wimlib-imagex", "mkfs.ntfs", "ntfs-3g", "grub-install"),
             "image": (*CREATE, "losetup"), "qemu": ("qemu-system-x86_64",)}
 REQUIRED = {name: PACKAGES[name] for name in ("python3", *PROFILES["image"])}
 OPTIONAL = {name: PACKAGES[name] for name in ("grub-script-check", "xorriso", "isoinfo", "qemu-system-x86_64")}
@@ -73,6 +77,12 @@ def diagnose(profile: str = "create") -> dict[str, object]:
                 missing.append("GRUB Unicode font")
         if name == "qemu" and not firmware:
             missing.append("OVMF")
+        if name == "windows":
+            parsed = re.search(r'\b(\d+)\.(\d+)', version)
+            if not parsed or tuple(map(int, parsed.groups())) < (2, 12):
+                missing.append("GRUB >= 2.12")
+            if not any((directory / "ntfs.mod").is_file() for directory in GRUB_DIRECTORIES):
+                missing.append("GRUB x86_64-efi NTFS module")
         capabilities[name] = {"ready": not missing, "missing": missing}
     optional = {name: commands[name] for name in OPTIONAL}
     optional["OVMF"] = {"found": bool(firmware), "path": firmware, "package": "ovmf"}

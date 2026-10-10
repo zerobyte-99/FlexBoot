@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import fcntl
 import re
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -18,6 +19,12 @@ class AttachedTarget:
     kind: str
 
 
+def assert_image_backing(loop: Path, image: Path) -> None:
+    backing = Path("/sys/block") / loop.name / "loop/backing_file"
+    if not backing.is_file() or backing.read_text().strip().lstrip("/") != str(image.resolve()).lstrip("/"):
+        raise SafetyError("Attached loop does not identify the requested backing image")
+
+
 @contextmanager
 def attached_image(image: Path, runner: Runner, *, readonly: bool = False) -> Iterator[AttachedTarget]:
     if runner.dry_run:
@@ -25,19 +32,30 @@ def attached_image(image: Path, runner: Runner, *, readonly: bool = False) -> It
         return
     if not image.is_file():
         raise FlexBootError(f"Image file not found: {image}")
-    args = ["losetup", "--find", "--show", "--partscan"]
-    if readonly:
-        args.append("--read-only")
-    result = runner.run([*args, str(image.resolve())], mutate=True)
-    loop = Path(result.stdout.strip())
-    if not re.fullmatch(r"/dev/loop\d+", str(loop)):
-        raise SafetyError(f"Unexpected loop device response: {loop}")
-    try:
-        yield AttachedTarget(loop, "image")
-    finally:
-        detached = runner.run(["losetup", "--detach", str(loop)], check=False, mutate=True)
-        if detached.returncode:
-            raise CleanupError(f"Could not detach {loop}; preserve backing image {image} for recovery")
+    with image.open("rb") as owner:
+        try:
+            fcntl.flock(owner, (fcntl.LOCK_SH if readonly else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise SafetyError("Raw image is already in use by another FlexBoot operation") from exc
+        before = os.fstat(owner.fileno())
+        args = ["losetup", "--find", "--show", "--partscan"]
+        if readonly:
+            args.append("--read-only")
+        result = runner.run([*args, str(image.resolve())], mutate=True)
+        loop = Path(result.stdout.strip())
+        if not re.fullmatch(r"/dev/loop\d+", str(loop)):
+            raise SafetyError(f"Unexpected loop device response: {loop}")
+        try:
+            after = image.stat()
+            if (before.st_dev, before.st_ino, before.st_size) != (after.st_dev, after.st_ino, after.st_size):
+                raise SafetyError("Backing image changed during loop attachment")
+            assert_image_backing(loop, image)
+            runner.run(["udevadm", "settle"], mutate=True)
+            yield AttachedTarget(loop, "image")
+        finally:
+            detached = runner.run(["losetup", "--detach", str(loop)], check=False, mutate=True)
+            if detached.returncode:
+                raise CleanupError(f"Could not detach {loop}; preserve backing image {image} for recovery")
 
 
 def create_sparse(path: Path, size: int, *, runner: Runner) -> None:

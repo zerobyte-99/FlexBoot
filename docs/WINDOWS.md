@@ -1,191 +1,139 @@
-# Windows and other boot families
+# Optional Windows installers
 
-Windows installer ISO boot is currently unsupported. This document explains the
-boot requirements and the available extension paths; it does not describe an
-implemented Windows feature.
+FlexBoot has an **experimental, opt-in x86-64 Windows installer backend**.
+Linux ISO files and Windows ISO files share one GRUB menu. Windows images remain
+intact on a separate NTFS partition; their prepared boot resources come from the
+selected ISO. No Windows image, Microsoft boot binary, or third-party loader is
+shipped in this repository.
 
-The [Windows loader experiments](WINDOWS-EXPERIMENTS.md) now record real Windows
-10/11 WinPE, ISO mounting and Setup tests. NTloader plus the native Windows ISO
-API is the selected direction for an optional backend; ordinary CLI Windows ISO
-installation remains unsupported.
+## Firmware and layout requirements
 
-## Why a Linux-style entry is insufficient
+The default Linux layout remains GPT, a 512 MiB FAT32 EFI System Partition, and
+ext4 data storage. Windows creation requires **both** `--windows-size` and
+`--windows-boot-layout basic-fat`. Its layout is:
 
-GRUB can read an ISO stored on ext4, but that does not make the ISO available to
-the next bootloader or operating system. Linux live profiles arrange rediscovery
-through parameters such as `findiso=`. Windows requires a different mechanism.
-Chainloading an EFI executable from GRUB's loopback device alone is not sufficient
-evidence that Windows Boot Manager can load its BCD, boot image, and installation
-payload after handoff. See the
-[GRUB loopback documentation](https://www.gnu.org/software/grub/manual/grub/html_node/Loopback-booting.html).
+| Partition | Filesystem | GPT role | Contents |
+|---|---|---|---|
+| 1 | FAT32, 512 MiB | Microsoft Basic Data | Removable UEFI GRUB, theme, local Windows runtime |
+| 2 | ext4 | Linux filesystem | Linux ISOs and FlexBoot metadata |
+| 3 | NTFS, requested reserve | Microsoft Basic Data | Intact Windows ISOs and per-image prepared resources |
 
-Successful validation must reach Windows Setup and demonstrate access to the
-intended installation image, not merely display Windows Boot Manager or WinPE.
-Windows must also be able to read the source media; the existing ext4 data
-partition cannot simply be assumed accessible to stock Windows PE.
+The Windows boot partition deliberately uses Basic Data rather than the ESP GUID.
+An additional USB ESP caused Windows Setup to fail when creating the destination
+ESP in extended tests. The Basic Data layout avoids that extra system-partition
+candidate, while retaining `EFI/BOOT/BOOTX64.EFI` and host-provided GRUB.
 
-## What Ventoy documents
+**Your firmware must support booting a FAT partition without the ESP GUID.**
+OVMF does; support is optional in the [UEFI specification, section 13.3.3](https://uefi.org/specs/UEFI/2.11/13_Protocols_Media_Access.html).
+A successful virtual-machine test does not establish support on your USB hardware.
+Secure Boot must remain disabled. Windows 11 still requires suitable hardware
+and firmware; FlexBoot supplies no requirement bypass.
 
-Ventoy's normal boot path emulates an ISO as a CD-ROM. Its
-[WIMBOOT mode](https://www.ventoy.net/en/doc_wimboot.html) is an alternative for
-official Windows installer images and some WinPE images. These are boot mechanisms,
-not filename-based GRUB templates.
+An existing Linux-only drive cannot acquire Windows storage through `add`.
+Creation erases the selected target with the usual safeguards; FlexBoot never
+silently shrinks or repartitions existing media.
 
-The separate [WIM-file plugin](https://www.ventoy.net/en/plugin_wimboot.html)
-requires an auxiliary image containing Windows boot files. That plugin should
-not be confused with the Windows ISO WIMBOOT mode. FlexBoot will not redistribute
-Microsoft boot files or introduce a Ventoy runtime dependency.
+## Host requirements and local runtime
 
-This comparison uses public documentation only. No Ventoy code, scripts, binaries,
-or plugins have been copied, adapted, downloaded, or executed.
+Run `flexboot doctor --for windows`. In addition to normal creation tools, this
+backend needs `7z`, `wimlib-imagex`, `mkfs.ntfs`, `ntfs-3g`, and host GRUB >= 2.12
+with its x86-64 EFI NTFS module. Explicit dependency installation is available:
 
-## Native installer partition
+```bash
+sudo flexboot install --for windows --dependencies
+```
 
-A conservative implementation can retain FlexBoot's FAT32 ESP and ext4 Linux ISO
-storage, adding an explicitly requested FAT32 Windows installer partition.
+Supply an audited local x86-64 hybrid [NTloader](https://github.com/grub4dos/ntloader)
+and its expected SHA-256 from trusted provenance. The tested runtime was v3.0.7,
+revision `744a6108d32ea47df95e9fd1ab42884525685985`. FlexBoot checks the supplied
+hash and handoff headers, and copies the local executable. It never downloads a
+loader or its auxiliary archive. The NTloader [stock-GRUB menu guide](https://github.com/grub4dos/ntloader/blob/main/docs/menu.md)
+describes the handoff.
 
-- Extract installation files from the user's own x86-64 Windows ISO into that
-  partition, including the native EFI loader, BCD, SDI, and `sources/boot.wim`.
-- Locate the installer partition by its filesystem identity and chainload its
-  Microsoft EFI loader from the FlexBoot menu.
-- Split `sources/install.wim` into `install.swm`, `install2.swm`, and further parts
-  when it exceeds FAT32's file-size limit. On Linux this would require an optional
-  host-provided WIM utility, such as wimlib, with its output validated.
-- Reject other oversized files unless a documented conversion is explicitly
-  implemented; splitting WIM is not a generic solution for oversized ESD files.
-- Multiple installers can share this partition in separate directories. They
-  require explicit boot-image selection and Setup source routing; simply copying
-  several ISO trees does not provide either mechanism.
+Build FlexBoot's small ISO-mount helper locally with an installed x86-64 MinGW
+compiler. Its source ships as `flexboot/assets/windows_mount.c`:
 
-Microsoft documents both FAT32 installer media and Setup's automatic use of split
-WIM files in its [USB installation guide](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/install-windows-from-a-usb-flash-drive?view=windows-11).
+```bash
+flexboot windows build-helper ./flexboot-win.exe
+# A non-default compiler can be supplied with --cc /path/to/compiler
+```
 
-This design needs an opt-in layout at media creation. Adding a partition to an
-existing drive must not silently shrink or repartition it. The original two-partition
-Linux layout remains valid. Firmware boot selection across multiple FAT partitions
-and GRUB-to-Microsoft handoff must be tested, rather than assumed.
+A locally calculated checksum tracks integrity; it does not establish a binary's
+or an ISO's authenticity. Audit runtime provenance and supply trusted ISOs.
 
-## Several installers on one FAT32 partition
+## Safe image-first workflow
 
-One installer per partition is a simple baseline, not a Windows or FAT32
-requirement. A shared Windows partition can hold directories such as
-`/windows/win11/`, `/windows/server/`, and `/windows/recovery/`, each containing
-its own extracted resources and any split WIM parts.
+Set `NTLOADER_SHA256` to the expected 64-character digest of your local loader.
+For two large Windows ISOs, a 32 GiB reserve leaves useful staging space:
 
-There are two separate selections to solve:
+```bash
+sudo flexboot image create ./out/windows.img --size 40G \
+  --windows-size 32G --windows-boot-layout basic-fat \
+  --ntloader ./ntloader --ntloader-sha256 "$NTLOADER_SHA256" \
+  --windows-helper ./flexboot-win.exe --dry-run
 
-1. Load the chosen Windows PE boot image through Windows Boot Manager or a
-   WIM-aware loader.
-2. Start the matching Setup executable with the intended installation payload,
-   rather than allowing automatic media discovery to select a different image.
+sudo flexboot image create ./out/windows.img --size 40G \
+  --windows-size 32G --windows-boot-layout basic-fat \
+  --ntloader ./ntloader --ntloader-sha256 "$NTLOADER_SHA256" \
+  --windows-helper ./flexboot-win.exe
 
-Microsoft documents [Setup's `/InstallFrom` option](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options?view=windows-11#installfrom)
-for a particular WIM or the first part of a split SWM series. Its
-[`Winpeshl.ini` interface](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpeshlini-reference-launching-an-app-when-winpe-starts?view=windows-11)
-can launch a startup program inside Windows PE.
+sudo flexboot windows add ./out/windows.img windows10.iso windows11.iso
+sudo flexboot add ./out/windows.img "Grml with spaces.iso"
+sudo flexboot status ./out/windows.img
+sudo flexboot verify ./out/windows.img
+```
 
-A FlexBoot Windows backend could prepare per-image startup logic that locates the
-Windows partition using an installation marker, checks the selected image ID,
-and launches that image's Setup and payload. Drive letters must be discovered at
-runtime. Each installer should retain its matching PE/Setup resources until
-cross-version compatibility is deliberately tested.
+From a checkout, substitute `python3 -m flexboot` for `flexboot`. The same creation
+options work with `create /dev/sdX`; use `devices`, inspect the identity, and preview
+with `--dry-run` before a human chooses a physical target.
 
-For a single GRUB menu, each Windows entry needs a tested loader handoff that
-selects its boot image and conveys the same image ID into Windows PE. Separate
-directories alone do not make Microsoft's EFI loader discover arbitrary BCD
-stores, nor does standard GRUB chainloading select a BCD entry automatically.
-An explicit WIM-loader bridge is a candidate for this middle layer; its local
-UEFI handoff must be validated before choosing a runtime or implementation.
+Ordinary `list`, `status`, `inspect`, `verify`, and `sync` include Windows state.
+Windows images have their own add/remove commands:
 
-An alternative is GRUB handing off to a shared Windows Boot Manager with its own
-BCD selection menu. That reduces the need for a custom GRUB-to-image selector but
-introduces a second menu. A shared Windows PE dispatcher could also select the
-installation source after startup, likewise adding another selection step.
+```bash
+sudo flexboot windows add /dev/sdX "Windows 11.iso"
+sudo flexboot windows add /dev/sdX "Windows 11.iso" --replace
+sudo flexboot windows remove /dev/sdX "Windows 11.iso"
+```
 
-The preferred target is therefore one shared Windows partition, per-image
-prepared resources, and one visible GRUB menu, with no writes to a persistent
-"selected image" file during boot. This is an architecture proposal, not a claim
-that the required handoff is already implemented or tested.
+Adding or replacing needs space for staged copies and WIM work files. Failed
+preparation does not publish an installed image; an existing entry is retained
+when replacement fails. `sync` can repair stale generated menus but refuses to
+bless changed prepared resources.
 
-## Intact-ISO alternative
+## Boot and source selection
 
-[iPXE wimboot](https://ipxe.org/wimboot) can boot a Windows PE WIM and is a separate,
-open-source project. It is a candidate for an explicit, user-supplied runtime;
-it is not built into FlexBoot or supplied by ordinary GRUB installation.
+Each menu entry selects that image's prepared boot-index-2 WIM by filesystem UUID
+and a generated hexadecimal ID. Preparation validates x64 WinPE and its native
+Setup program, inserts a startup script and the independently written helper,
+and verifies the resulting WIM. The source ISO is unchanged.
 
-Its [architecture documentation](https://ipxe.org/appnote/wimboot_architecture)
-explains the boot-file virtual filesystem. That boot mechanism does not by itself
-prove that Setup can access the original ISO and its installation payload on the
-USB. An intact-ISO design must also solve source storage, ISO mounting in WinPE,
-and lifecycle after firmware handoff. It may require Windows-readable storage and
-prepared WinPE startup logic, which expands the dependency and audit surface.
+WinPE initializes devices and requires exactly one accessible volume containing
+its installation marker. The helper attaches only the selected ISO read-only,
+uses Microsoft's [physical-device query](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-getvirtualdiskphysicalpath)
+and [storage-device numbers](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-ioctl_storage_get_device_number)
+to identify that attachment's drive letter, and rejects ambiguity. DISM checks the
+selected installation WIM before native WinPE Setup receives its explicit
+`/InstallFrom:` path. The startup layer does not scan other ISOs or choose an
+installation destination.
 
-## Initial experiment plan (2026-10-09)
+Select the destination in Microsoft's Setup UI. After its first installation
+reboot, boot the destination's Windows Boot Manager; continuing to boot the USB
+returns to the FlexBoot menu. Startup diagnostics are in
+`X:\Windows\Temp\flexboot.log` and Microsoft's `X:\Windows\Panther` logs.
 
-The plan below preceded the lab comparison. See
-[the results and selected direction](WINDOWS-EXPERIMENTS.md) for what has now
-been verified and the remaining implementation checks.
+## Validation and limits
 
-Keep the Linux backend stable and build a separate, opt-in Windows preparation
-backend. Start with one native installer on disposable FAT32 media. Establish
-that Setup can read its payload and install onto a separate disposable virtual
-disk before attempting multiple installers or a loader bridge.
+See [extended loader experiments](WINDOWS-EXPERIMENTS.md) for measured results.
+Validation includes real Windows 10/11 WinPE, exact ISO mounting, multiple Windows
+entries, Windows installation on disposable virtual disks, Linux userspace on
+Windows-enabled media, dependency and integrity failures, transactional rollback,
+and rejection of duplicate source markers. Physical USB compatibility remains
+unverified.
 
-| Route | Advantage | Unresolved cost |
-|---|---|---|
-| Native Microsoft loader + BCD menu | Standard Windows boot flow, multiple WinPE entries | Second menu; reliable BCD preparation from a Linux host |
-| Per-entry WIM-aware bridge | Could retain one visible GRUB menu | Local UEFI handoff, selected-image transfer, and an additional audited runtime |
-| One shared WinPE dispatcher | Simple common boot environment | Second selection step and deliberate cross-version Setup compatibility testing |
-| Intact ISO on Windows-readable storage | Retains original images | WinPE ISO mounting, payload visibility, and larger boot/storage changes |
-
-`wimlib` can prepare WIM content and split installation images; it is not a BCD
-editor or a GRUB-to-WinPE boot bridge. Native BCD authoring is therefore a separate
-Linux-host design problem, even before choosing a single-menu implementation.
-
-The [wimboot documentation](https://ipxe.org/wimboot#injected_files) describes
-injected startup files inside WinPE and selection of a WIM's bootable index. That
-makes it a candidate for passing a per-image startup script without writing a
-persistent selection marker to USB. Its documented iPXE examples do not establish
-that stock host-provided GRUB can supply the equivalent local UEFI file handoff.
-Test that boundary separately. If it needs a new runtime, require an explicit,
-auditable optional installation and document how it is built/provided; never
-silently download or bundle it into the normal Linux boot path.
-
-Then test two installers in separate directories on one shared FAT32 partition.
-Each must select its matching PE/Setup resources and explicitly pass the intended
-WIM or first SWM part using Microsoft's documented
-[`/InstallFrom`](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options?view=windows-11#installfrom).
-Keep every SWM part together, discover drive letters at runtime, and fail if media
-identity or image selection is ambiguous. An extracted installer larger than
-FAT32's per-file limit needs WIM splitting or a reviewed alternative filesystem;
-do not split arbitrary files or assume ESD conversion is lossless.
-
-The first proof should use QEMU/OVMF, no network or physical disks, and a separate
-disposable installation disk. Verify both sources, including a deliberately missing
-payload, and ensure selecting one cannot start the other. The subsequent lab
-pass used user-supplied Windows 10 and 11 ISOs and tested
-WinPE, ISO mounting and Setup. Full installation and physical USB compatibility
-remain unverified, and Windows support remains unimplemented in the CLI.
-
-## Acceptance checks
-
-Before advertising Windows support:
-
-- Recognize the actual installer structure and EFI architecture, including UDF
-  images, rather than matching ISO names.
-- Validate extraction paths, case-insensitive collisions, sizes, free space,
-  metadata, and target identity before writing.
-- Stage changes so a failed preparation cannot leave a boot menu claiming a valid
-  installer. Track extracted files and split-image output for verification/removal.
-- Maintain regression coverage for mount cleanup and ancestry protection described
-  in [Security](SECURITY.md#validation-limits) before broadening privileged writes.
-- Test a user-supplied Windows ISO in disposable QEMU media with no physical disks
-  exposed, then deliberately test representative hardware.
-- Distinguish Windows installer, WinPE recovery, and installed-Windows/VHD boot.
-  Secure Boot, ARM64, old BIOS-only media, and arbitrary customized ISOs require
-  separate validation and must not inherit support claims.
-
-Other operating systems also need individual profiles or native-loader backends.
-BSD installers, hypervisors, and recovery tools should each be evaluated against
-vendor boot mechanisms and actual images. A generic “boot any ISO” entry is not
-a substitute for that work.
+Current accepted sources are ISO9660/UDF installers with an x64 Setup boot image
+at WIM index 2, WinPE build >=19041, and `sources/install.wim`. ESD, split WIM,
+ARM64, BIOS, Secure Boot, Windows Server, older PE, arbitrary custom WinPE, and
+all firmware variants are not claimed as supported. Boot WIM size is limited to
+2 GiB. Detection by contents is an eligibility check, not a guarantee that every
+new Windows release will install on every machine.

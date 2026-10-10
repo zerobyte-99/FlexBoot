@@ -88,3 +88,25 @@ are the same as the screenshot helper.
 
 This verifies ISO rediscovery through the initramfs into userspace. It does not
 replace the privileged full-GPT `grub-install` integration test or hardware tests.
+
+
+## Optional Windows validation
+
+The privileged image suite includes default two-partition media and explicit
+Windows-enabled three-partition provisioning. The latter needs the Windows host
+dependencies reported by doctor and uses generated handoff-header fixtures; it
+tests formatting, metadata, inspection, and integrity checks, not Windows boot.
+It reports a dependency skip when that host capability is absent. Neither test
+uses a physical target.
+
+Actual installer validation requires user-supplied ISOs and audited local runtime
+files. Use only owned raw images for both the USB source and installation target,
+private OVMF variables and TPM state, and QEMU source snapshots. Check the chosen
+ISO, full image application, and a subsequent destination-only boot into first-run
+setup. A language-selection screen alone is insufficient. Check missing and
+duplicate source markers, damaged resources, replacement rollback, and Linux
+userspace from the shared menu. Keep firmware compatibility claims limited to
+the tested environment; physical media creation remains a human operation.
+
+The [Windows experiment record](WINDOWS-EXPERIMENTS.md) documents the measured
+results and the explicit Basic Data FAT boot-layout requirement.

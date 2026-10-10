@@ -358,9 +358,11 @@ class MountedMediaTests(unittest.TestCase):
             def run(argv, **kwargs):
                 node = nodes[Path(argv[argv.index("--source") + 1])]
                 return subprocess.CompletedProcess(argv, 0, json.dumps({"filesystems": [{"target": node.mountpoints[0], "options": "ro,nosuid,nodev"}]}), "")
-            with patch("flexboot.builder.find_device", side_effect=lambda path, runner=None: nodes[path]), patch("flexboot.builder.discover", return_value=[target]), patch("flexboot.builder.system_mount_sources", return_value=[]), patch("flexboot.builder.discover_partitions", return_value=(efi.path, data.path)), patch("flexboot.builder.require_root", side_effect=AssertionError("must not request root")), patch.object(Runner, "run", side_effect=run):
+            with patch("flexboot.builder.validate_partition_nodes"), patch("flexboot.builder.find_device", side_effect=lambda path, runner=None: nodes[path]), patch("flexboot.builder.discover", return_value=[target]), patch("flexboot.builder.system_mount_sources", return_value=[]), patch("flexboot.builder.discover_partitions", return_value=(efi.path, data.path)), patch("flexboot.builder.require_root", side_effect=AssertionError("must not request root")), patch.object(Runner, "run", side_effect=run):
                 with open_media(target.path, Runner(), readonly=True) as opened:
-                    self.assertEqual(opened, paths)
+                    self.assertEqual(opened.efi, paths.efi)
+                    self.assertEqual(opened.data, paths.data)
+                    self.assertEqual(opened.efi_uuid, efi.uuid)
                 with self.assertRaises(SafetyError):
                     with open_media(target.path, Runner()):
                         self.fail("must reject writable access to already mounted media")

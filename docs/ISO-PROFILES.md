@@ -55,3 +55,12 @@ target first; sync performs media writes and checks recorded content integrity.
 7. Inspect a real vendor image and boot it under QEMU and representative hardware before describing it as hardware validated.
 
 Filename matching and copied arguments from untrusted ISO text are prohibited. Text may establish a product marker, but generated arguments remain profile-controlled. A broad guess is worse than an unsupported diagnostic.
+
+
+## Windows is a separate preparation backend
+
+Windows installers use `windows add`, not Linux profile templates. Their optional
+NTFS layout, prepared WinPE, local WIM loader and native ISO attachment have their
+own inspection and integrity records; they share the visible GRUB menu. See the
+[Windows guide](WINDOWS.md) for explicit firmware/runtime requirements and tested
+formats. Renaming an arbitrary ISO does not make it eligible.

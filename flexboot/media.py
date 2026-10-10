@@ -24,6 +24,10 @@ from .process import Runner
 class MediaPaths:
     efi: Path
     data: Path
+    windows: Path | None = None
+    windows_uuid: str = ""
+    efi_uuid: str = ""
+    boot_partition_role: str = "esp"
 
     @property
     def manifest(self) -> Path:
@@ -168,8 +172,10 @@ def initialize(paths: MediaPaths, data_uuid: str, runner: Runner | None = None) 
     metadata.mkdir(parents=True, exist_ok=True)
     manifest = Manifest(data_filesystem_uuid=data_uuid)
     manifest.save(paths.manifest)
+    (metadata / "lock").touch(mode=0o600, exist_ok=True)
     (metadata / "version").write_text(__version__ + "\n", encoding="utf-8")
-    install = {"version": __version__, "architecture": "x86_64", "firmware": "UEFI", "data_uuid": data_uuid}
+    install = {"version": __version__, "architecture": "x86_64", "firmware": "UEFI",
+               "data_uuid": data_uuid, "boot_partition_role": paths.boot_partition_role}
     atomic_text(metadata / "install.json", json.dumps(install, indent=2, sort_keys=True) + "\n")
     default_theme = Path(BRAND.theme_background).stem.removeprefix("background-")
     atomic_text(paths.theme_config, json.dumps({"schema_version": 1, "layout": "flexboot", "kind": "builtin", "name": default_theme}, indent=2, sort_keys=True) + "\n")
@@ -380,12 +386,21 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
             raise MediaStateError(f"Local integrity mismatch: {iso_path.name}; sync will not accept changed content. Use add --replace with the intended source.")
         records.append(ISORecord.from_match(iso_path.name, iso_path.stat().st_size, digest, match))
     old.isos = records
+    from .windows import verify as verify_windows
+    windows_problems = verify_windows(paths, full_hash=True, check_menu=False)
+    if windows_problems:
+        raise MediaStateError("Windows media verification failed; sync will not bless changed resources: " + "; ".join(windows_problems))
     setting = theme_setting(paths)
     work = Path(tempfile.mkdtemp(prefix=".flexboot-sync-", dir=paths.efi))
     theme = paths.grub_dir / "themes/flexboot"
     saved_theme = work / "saved-theme"
     original_text = {path: path.read_text() if path.exists() else None for path in
                      (paths.manifest, paths.grub_dir / "grub.cfg", paths.grub_dir / "generated.cfg")}
+    from .windows import load as load_windows, publish as publish_windows, state_path as windows_state_path
+    windows_state = load_windows(paths)
+    if windows_state:
+        for path in (paths.grub_dir / "windows.cfg", windows_state_path(paths)):
+            original_text[path] = path.read_text() if path.exists() else None
     theme_published = False
     preserve_recovery = False
     font_published = False
@@ -413,6 +428,8 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
         for name in ("grub.cfg", "generated.cfg"):
             atomic_text(paths.grub_dir / name, (stage.grub_dir / name).read_text())
         old.save(paths.manifest)
+        if windows_state:
+            publish_windows(paths, windows_state, runner or Runner())
     except BaseException as original:
         try:
             if theme_published:
@@ -497,12 +514,18 @@ def verify(paths: MediaPaths, *, full_hash: bool = True) -> list[str]:
         problems.append(str(exc))
     if not (paths.grub_dir / "fonts" / "unicode.pf2").is_file():
         problems.append("GRUB Unicode font is missing: unicode.pf2")
+    from .windows import verify as verify_windows
+    problems.extend(verify_windows(paths, full_hash=full_hash))
     return problems
 
 
 def inspect(paths: MediaPaths, *, full_hash: bool = False) -> dict[str, object]:
     manifest = Manifest.load(paths.manifest)
+    from .windows import load as load_windows
+    windows = load_windows(paths)
     return {
+        "windows": windows,
+        "boot_partition_role": paths.boot_partition_role,
         "version": __version__, "data_filesystem_uuid": manifest.data_filesystem_uuid,
         "bootloader": str(paths.efi / "EFI" / "BOOT" / "BOOTX64.EFI"),
         "bootloader_present": (paths.efi / "EFI" / "BOOT" / "BOOTX64.EFI").is_file(),
@@ -510,7 +533,8 @@ def inspect(paths: MediaPaths, *, full_hash: bool = False) -> dict[str, object]:
             {**asdict(item), "boot_iso_path": iso_boot_path(item.filename),
              "actual_sha256": sha256_file(paths.iso_dir / item.filename) if full_hash and (paths.iso_dir / item.filename).is_file() else None}
             for item in manifest.isos
-        ],
+        ] + ([{**item, "profile":"windows-installer", "sha256":item["files"]["image.iso"]["sha256"],
+                "boot_iso_path":f"/windows/{item['id']}/image.iso"} for item in windows["images"]] if windows else []),
         "theme": theme_setting(paths),
         "verification": verify(paths, full_hash=full_hash),
     }

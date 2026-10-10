@@ -11,6 +11,7 @@ class Brand:
     tagline: str = "Build. Boot. Repeat."
     efi_label: str = "FLEXBOOTEFI"
     data_label: str = "FLEXBOOT"
+    windows_label: str = "FLEXBOOTWIN"
     metadata_dir: str = ".flexboot"
     accent: str = "#d98b3a"
     background: str = "#16191d"

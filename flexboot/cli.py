@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
+import threading
+from contextlib import ExitStack, contextmanager
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -12,7 +15,7 @@ from .builder import build_attached, open_media, require_root
 from .devices import Device, discover, find_device, format_size
 from .disk import assert_loop_target
 from .doctor import PROFILES as CAPABILITIES, diagnose, preflight
-from .errors import CleanupError, FlexBootError
+from .errors import MediaStateError, CleanupError, FlexBootError
 from .iso import inspect_iso, require_supported
 from .profiles import PROFILES as ISO_PROFILES, supported_descriptions
 from .media import (
@@ -31,6 +34,52 @@ def _add_output_options(parser: argparse.ArgumentParser, *, dry_run: bool = Fals
     parser.add_argument("--verbose", action="store_true", help="show detailed diagnostics")
     if dry_run:
         parser.add_argument("--dry-run", action="store_true", help="plan without persistent modifications")
+
+
+
+def _windows_creation_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--windows-size", help="opt in to a third NTFS Windows partition, e.g. 24G")
+    parser.add_argument("--windows-boot-layout", choices=("basic-fat",),
+                        help="explicitly use a FAT32 Basic Data boot partition; firmware must support booting FAT without the ESP GUID")
+    parser.add_argument("--ntloader", type=Path, help="local audited x64 NTloader executable")
+    parser.add_argument("--ntloader-sha256", help="expected NTloader SHA-256")
+    parser.add_argument("--windows-helper", type=Path, help="locally built FlexBoot WinPE helper")
+
+
+def _windows_creation(args: argparse.Namespace) -> dict:
+    size = parse_size(args.windows_size) if args.windows_size else 0
+    runtime = (args.ntloader, args.ntloader_sha256, args.windows_helper)
+    if not size and (any(runtime) or args.windows_boot_layout):
+        raise FlexBootError("Windows runtime options require --windows-size")
+    if args.windows_size:
+        if args.windows_boot_layout != "basic-fat":
+            raise FlexBootError("Windows creation requires --windows-boot-layout basic-fat. Firmware must support booting FAT32 without the ESP GUID; the Linux-only default uses an ESP.")
+        if size < 4 * 1024**3 or not all(runtime):
+            raise FlexBootError("Windows creation requires >=4G, --ntloader, --ntloader-sha256 and --windows-helper")
+        from .windows import require_runtime
+        require_runtime(args.ntloader, args.ntloader_sha256, args.windows_helper)
+    return {"windows_size": size, "boot_partition_role": "basic-fat" if size else "esp", "ntloader": args.ntloader,
+            "ntloader_sha256": args.ntloader_sha256 or "", "windows_helper": args.windows_helper}
+
+
+def _creation_layout(options: dict) -> list[str]:
+    if options['windows_size']:
+        return [f"512 MiB FAT32 Basic Data boot partition {BRAND.efi_label}",
+                f"remaining minus Windows reserve ext4 {BRAND.data_label}",
+                f"{format_size(options['windows_size'])} NTFS {BRAND.windows_label}"]
+    return [f"512 MiB FAT32 ESP {BRAND.efi_label}", f"remaining ext4 {BRAND.data_label}"]
+
+
+@contextmanager
+def _media_target(target: Path, runner: Runner, *, readonly: bool = False):
+    with ExitStack() as stack:
+        device_path = target
+        if target.is_file():
+            require_root()
+            device_path = stack.enter_context(attached_image(target, runner, readonly=readonly)).device
+        device = find_device(device_path, runner) if readonly else None
+        paths = stack.enter_context(open_media(device_path, runner, readonly=readonly))
+        yield paths, device
 
 
 def parser() -> argparse.ArgumentParser:
@@ -63,6 +112,7 @@ def parser() -> argparse.ArgumentParser:
     create.add_argument("--allow-non-usb", action="store_true")
     create.add_argument("--confirm-erase", action="store_true", help="allow non-interactive erase; requires --expect-identity")
     create.add_argument("--expect-identity", help="exact serial, by-id path, or major/minor:size fingerprint")
+    _windows_creation_options(create)
     _add_output_options(create, dry_run=True)
 
     for name, help_text in (
@@ -99,6 +149,7 @@ def parser() -> argparse.ArgumentParser:
     image_create = image_commands.add_parser("create", help="create a sparse FlexBoot image")
     image_create.add_argument("path", type=Path)
     image_create.add_argument("--size", required=True)
+    _windows_creation_options(image_create)
     _add_output_options(image_create, dry_run=True)
     image_inspect = image_commands.add_parser("inspect", help="inspect a FlexBoot image")
     image_inspect.add_argument("path", type=Path)
@@ -106,6 +157,21 @@ def parser() -> argparse.ArgumentParser:
     image_boot = image_commands.add_parser("boot", help="boot an image in QEMU/OVMF")
     image_boot.add_argument("path", type=Path)
     image_boot.add_argument("--headless", action="store_true")
+    windows = commands.add_parser("windows", help="optional Windows installer preparation")
+    windows_commands = windows.add_subparsers(dest="windows_command", required=True)
+    helper = windows_commands.add_parser("build-helper", help="compile the owned WinPE ISO helper locally")
+    helper.add_argument("output", type=Path)
+    helper.add_argument("--cc", default="x86_64-w64-mingw32-gcc")
+    winadd = windows_commands.add_parser("add", help="prepare intact x64 Windows installer ISOs")
+    winadd.add_argument("target", type=Path)
+    winadd.add_argument("isos", type=Path, nargs="+")
+    winadd.add_argument("--replace", action="store_true")
+    winadd.add_argument("--continue-on-error", action="store_true")
+    _add_output_options(winadd, dry_run=True)
+    winremove = windows_commands.add_parser("remove", help="remove an installed Windows ISO and its prepared resources")
+    winremove.add_argument("target", type=Path)
+    winremove.add_argument("iso_name")
+    _add_output_options(winremove, dry_run=True)
     return root
 
 
@@ -205,16 +271,21 @@ def _confirm_interactive(device: Device) -> None:
 
 def command_create(args: argparse.Namespace) -> int:
     runner = Runner(dry_run=args.dry_run, verbose=args.verbose)
+    windows_options = _windows_creation(args)
     preflight("create")
     all_devices, protected = device_inventory()
     device = find_device(args.target)
     validate_physical_target(device, protected_names=protected, allow_non_usb=args.allow_non_usb)
     before = device.identity()
     if args.dry_run:
-        plan = {"target": str(device.path), "identity": before.fingerprint, "erase": True, "layout": [f"512 MiB FAT32 {BRAND.efi_label}", f"remaining ext4 {BRAND.data_label}"], "persistent_changes": False}
-        print(json.dumps(plan, indent=2) if args.json else f"Dry run: would erase {device.path}\nIdentity: {before.fingerprint}\nLayout: 512 MiB FAT32 + remaining ext4\nNo changes made.")
+        plan = {"target": str(device.path), "identity": before.fingerprint, "erase": True,
+                "layout": _creation_layout(windows_options), "persistent_changes": False,
+                "windows_size": windows_options["windows_size"]}
+        plan["boot_partition_role"] = windows_options["boot_partition_role"]
+        print(json.dumps(plan, indent=2) if args.json else f"Dry run: would erase {device.path}\nIdentity: {before.fingerprint}\nLayout: {' + '.join(plan['layout'])}\nNo changes made.")
         return 0
     require_root()
+    print("Layout: " + " + ".join(_creation_layout(windows_options)))
     if args.confirm_erase or args.expect_identity:
         check_unattended_confirmation(before, args.expect_identity, args.confirm_erase)
     else:
@@ -224,15 +295,14 @@ def command_create(args: argparse.Namespace) -> int:
         _, current_protected = device_inventory()
         validate_physical_target(current, protected_names=current_protected, allow_non_usb=args.allow_non_usb)
         revalidate_identity(before, current.identity())
-    build_attached(device.path, runner, identity_check=identity_check)
+    build_attached(device.path, runner, identity_check=identity_check, **windows_options)
     print(f"Created {BRAND.product_name} media on {device.path}")
     return 0
 
 
 def _read_command(args: argparse.Namespace, action: str) -> int:
     runner = Runner(verbose=args.verbose)
-    target_device = find_device(args.target, runner)
-    with open_media(args.target, runner, readonly=True) as paths:
+    with _media_target(args.target, runner, readonly=True) as (paths, target_device):
         if action == "verify":
             problems = verify(paths, full_hash=not args.quick)
             payload = {"ok": not problems, "problems": problems, "iso_hashes_checked": not args.quick}
@@ -253,7 +323,8 @@ def _read_command(args: argparse.Namespace, action: str) -> int:
         if not payload: print("No ISOs installed.")
     elif action == "status":
         problems = payload["verification"]
-        print(f"{BRAND.product_name} {payload['version']}\n\nDevice\n  {args.target}\n  {target_device.model or 'Unknown model'}\n  {format_size(target_device.size)}\n\nBoot\n  UEFI x86_64\n  Removable loader: {'OK' if payload['bootloader_present'] else 'MISSING'}\n\nImages")
+        boot_role = "FAT32 Basic Data" if payload['boot_partition_role'] == 'basic-fat' else "FAT32 EFI System Partition"
+        print(f"{BRAND.product_name} {payload['version']}\n\nDevice\n  {args.target}\n  {target_device.model or 'Unknown model'}\n  {format_size(target_device.size)}\n\nBoot\n  UEFI x86_64\n  {boot_role}\n  Removable loader: {'OK' if payload['bootloader_present'] else 'MISSING'}\n\nImages")
         if payload["isos"]:
             for item in payload["isos"]:
                 print(f"  ✓ {item['filename']}\n    {item['profile']} · {format_size(item['size'])}")
@@ -276,7 +347,13 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
                     matches.append({"file": str(source), "status": "not-attempted"})
                     continue
                 try:
-                    match = require_supported(source, runner)
+                    if args.command == "windows":
+                        from .windows import inspect_source
+                        inspect_source(source, runner)
+                        from types import SimpleNamespace
+                        match = SimpleNamespace(profile="windows-installer")
+                    else:
+                        match = require_supported(source, runner)
                     matches.append({"file": str(source), "profile": match.profile, "status": "would-add-or-replace" if args.replace else "would-add-or-skip"})
                 except (FlexBootError, OSError) as exc:
                     matches.append({"file": str(source), "status": "failed", "reason": str(exc)})
@@ -294,7 +371,25 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
         return 0
     require_root()
     preflight("media")
-    with open_media(args.target, runner) as paths:
+    with _media_target(args.target, runner) as (paths, _device):
+        if args.command == "windows":
+            from . import windows
+            preflight("windows")
+            if action == "remove":
+                windows.remove(paths, args.iso_name, runner)
+                print(f"Removed Windows ISO {args.iso_name}")
+                return 0
+            outcomes = []
+            for source in args.isos:
+                try:
+                    _record, status = windows.add(paths, source, runner, replace=args.replace)
+                    outcomes.append({"file":str(source), "status":status})
+                except (FlexBootError, OSError) as exc:
+                    outcomes.append({"file":str(source), "status":"failed", "reason":str(exc)})
+                    if not args.continue_on_error or isinstance(exc, (SafetyError, MediaStateError, OSError)):
+                        break
+            print(json.dumps({"isos":outcomes}, indent=2) if args.json else "\n".join(f"{r['status']}: {r['file']}" + (f" — {r['reason']}" if 'reason' in r else '') for r in outcomes))
+            return 2 if any(r["status"] == "failed" for r in outcomes) else 0
         if action == "add":
             outcomes = batch_add(paths, args.isos, runner, replace=args.replace, continue_on_error=args.continue_on_error)
             counts = {status: sum(item["status"] == status for item in outcomes) for status in ("added", "replaced", "skipped", "failed", "not-attempted")}
@@ -372,9 +467,12 @@ def command_image(args: argparse.Namespace) -> int:
     runner = Runner(dry_run=getattr(args, "dry_run", False), verbose=getattr(args, "verbose", False))
     if args.image_command == "create":
         size = parse_size(args.size)
+        windows_options = _windows_creation(args)
+        if size - windows_options["windows_size"] < 2 * 1024**3 and windows_options["windows_size"]:
+            raise FlexBootError("Leave at least 2 GiB for EFI/Linux storage")
         if args.dry_run:
             create_sparse(args.path, size, runner=runner)
-            print(f"Dry run: would create sparse image {args.path} ({format_size(size)}). No changes made.")
+            print(f"Dry run: would create sparse image {args.path} ({format_size(size)})." + (f" FAT32 Basic Data boot partition; Windows NTFS reserve: {format_size(windows_options['windows_size'])}." if windows_options["windows_size"] else "") + " No changes made.")
             return 0
         require_root()
         preflight("image")
@@ -384,7 +482,7 @@ def command_image(args: argparse.Namespace) -> int:
             created = True
             with attached_image(args.path, runner) as target:
                 assert_loop_target(target.device)
-                build_attached(target.device, runner)
+                build_attached(target.device, runner, **windows_options)
         except CleanupError:
             # An active mount/loop may still need the image for recovery.
             raise
@@ -415,6 +513,13 @@ def boot_image(args: argparse.Namespace) -> int:
 
 
 def dispatch(args: argparse.Namespace) -> int:
+    if args.command == "windows":
+        if args.windows_command == "build-helper":
+            from .windows import build_helper
+            build_helper(args.output, args.cc)
+            print(f"Built local Windows helper: {args.output}")
+            return 0
+        return _mutating_media(args, args.windows_command)
     if args.command == "profiles":
         payload = [{"id": profile.profile_id, "description": profile.description} for profile in ISO_PROFILES]
         print(json.dumps(payload, indent=2) if args.json else "\n".join(f"{item['id']}: {item['description']}" for item in payload))
@@ -450,9 +555,18 @@ def dispatch(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    previous = None
+    if threading.current_thread() is threading.main_thread():
+        previous = signal.getsignal(signal.SIGTERM)
+        def terminate(_signal, _frame):
+            raise KeyboardInterrupt
+        signal.signal(signal.SIGTERM, terminate)
     try:
         return dispatch(parser().parse_args(argv))
     except KeyboardInterrupt:
         print("Interrupted; cleanup attempted.", file=sys.stderr); return 130
     except (FlexBootError, OSError) as exc:
         print(f"flexboot: {exc}", file=sys.stderr); return 2
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)

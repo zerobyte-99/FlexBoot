@@ -29,6 +29,7 @@ FlexBoot uses standard Linux utilities and the GNU GRUB supplied by the host dis
 - Transactional ISO copies, SHA-256 integrity records, and generated-menu verification.
 - Two selectable GRUB layouts and four original wallpapers, plus custom PNG support.
 - Raw-image creation for safer development and optional QEMU/OVMF testing.
+- Optional Windows installer preparation with intact NTFS ISO storage and one shared GRUB menu; [firmware requirements apply](docs/WINDOWS.md).
 - Python standard library implementation with no mandatory third-party Python packages.
 
 The intended workflow is:
@@ -67,6 +68,7 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 | Fedora Live | LiveOS, volume label, and dracut loader resources | Publisher hash and Fedora 44 inspection; hardware pending |
 | Grml amd64 | Matching flavour resources and boot ID; live-boot `findiso=` | Grml small 2026.09 QEMU login; hardware pending |
 | Gentoo amd64 Live | Current dracut layout and matching live-root label | Minimal 20260913 QEMU login; hardware pending |
+| Windows x64 WIM installers, opt-in | Prepared WinPE, local NTloader, native read-only ISO API | Windows 10/11 full installations and independent QEMU boots; USB hardware pending |
 
 FlexBoot rejects incomplete and unknown layouts instead of producing speculative menu entries. Installer-only Kali images and Fedora network installers do not match the live profiles.
 
@@ -325,7 +327,7 @@ Brand name, tagline, filesystem labels, credit text, gradient, font, and default
 
 ## Disk layout
 
-FlexBoot creates exactly two GPT partitions:
+By default, FlexBoot creates exactly two GPT partitions:
 
 ```text
 USB drive
@@ -347,6 +349,42 @@ USB drive
 ```
 
 The FAT32 partition contains only the removable UEFI loader and presentation files. ISO images live on ext4, avoiding FAT32's single-file size limit. GRUB locates the data filesystem by UUID and never relies on `(hd0)` or Linux `/dev/sdX` ordering.
+
+## Optional Windows installers
+
+Windows support requires a newly created, explicitly selected layout: FAT32 boot
+storage tagged as GPT Basic Data, ext4 Linux storage, and a reserved NTFS Windows
+partition. Firmware must support booting FAT without the ESP GUID; this works in
+OVMF and still needs USB hardware validation. The default Linux layout uses an ESP.
+
+Supply an audited local NTloader, its expected SHA-256, and FlexBoot's locally
+built helper. Nothing is downloaded by these commands:
+
+```bash
+flexboot doctor --for windows
+flexboot windows build-helper ./flexboot-win.exe
+
+# Set NTLOADER_SHA256 to your loader's trusted expected digest first
+sudo flexboot image create ./out/windows.img --size 40G \
+  --windows-size 32G --windows-boot-layout basic-fat \
+  --ntloader ./ntloader --ntloader-sha256 "$NTLOADER_SHA256" \
+  --windows-helper ./flexboot-win.exe
+
+sudo flexboot windows add ./out/windows.img windows10.iso windows11.iso
+sudo flexboot add ./out/windows.img "Grml with spaces.iso"
+sudo flexboot verify ./out/windows.img
+```
+
+Each Windows entry boots its matching prepared WinPE, uniquely identifies the
+source volume, mounts only the selected ISO read-only, and supplies Setup with an
+explicit installation WIM. Choose the destination in Microsoft's Setup UI.
+ESD, ARM64, BIOS, Secure Boot, and arbitrary Windows images are not supported.
+See the [Windows guide](docs/WINDOWS.md) for dependencies, physical creation,
+replacement/removal, diagnostics, and measured [test results](docs/WINDOWS-EXPERIMENTS.md).
+
+![Actual shared GRUB menu with Grml, Windows 10, and Windows 11](docs/images/linux-windows-menu.png)
+
+Actual 1280×800 QEMU/OVMF capture from the media used for the Windows installation tests.
 
 ## Raw images and QEMU
 
@@ -402,7 +440,7 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 | [Architecture](docs/ARCHITECTURE.md) | Components, boundaries, and data flow |
 | [Security](docs/SECURITY.md) | Wrong-disk protections and threat model |
 | [ISO profiles](docs/ISO-PROFILES.md) | Supported layouts and profile development |
-| [Windows and other systems](docs/WINDOWS.md) | Boot requirements, [real Windows 10/11 experiments](docs/WINDOWS-EXPERIMENTS.md), and extension options; Windows is not yet supported |
+| [Windows installers](docs/WINDOWS.md) | Opt-in layout, runtime preparation, [real Windows 10/11 experiments](docs/WINDOWS-EXPERIMENTS.md), and firmware limits |
 | [Development](docs/DEVELOPMENT.md) | Local workflow and integration tests |
 | [Installation](docs/INSTALLATION.md) | Dependency setup and the global command |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common dependency, ISO, GRUB, and theme issues |
@@ -414,19 +452,19 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 - Secure Boot unsupported
 - Legacy BIOS unsupported
 - ARM64 unsupported
-- Windows installer ISOs unsupported
+- Windows requires the explicit Basic Data boot layout, a local runtime, and compatible firmware; physical USB validation pending
 - Persistence overlays unsupported
 - Encrypted ISO storage unsupported
 - Custom profile definitions unsupported
 
-The roadmap includes persistence for compatible distributions, richer theme controls, Secure Boot design, legacy BIOS, ARM64 UEFI, Windows installer support, and an optional desktop frontend. New boot families are added only when their boot mechanism can be documented and validated reliably.
+The roadmap includes persistence for compatible distributions, richer theme controls, Secure Boot design, legacy BIOS, ARM64 UEFI, broader Windows image and firmware coverage, and an optional desktop frontend. New boot families are added only when their boot mechanism can be documented and validated reliably.
 
 ## Project principles
 
 - Standard Linux tooling
 - Host-provided GNU GRUB
 - Readable configuration and metadata
-- No downloaded runtime components
+- No automatically downloaded runtime components
 - Conservative image detection
 - Fail-closed device safety
 - Small, auditable implementation

@@ -19,6 +19,15 @@ htmlcov/
 *.qcow2
 *.vdi
 *.vmdk
+*.vhd
+*.vhdx
+*.wim
+*.esd
+*.sdi
+*.cpio
+*.efi
+*.exe
+runtime/
 out/
 mnt/
 mounts/
@@ -43,6 +52,8 @@ FlexBoot-backups/
 # Local build instructions and internal development records
 IMPROVEMENTS.md
 AGENTS.md
+CODEX.md
+.codex/
 CODEX_PROMPT.md
 README_START_HERE.md
 START_CODEX.txt

@@ -2,7 +2,9 @@
 
 **Selected direction: an optional NTloader handoff plus Windows' native ISO
 mounting API, with small FlexBoot-owned preparation and source-selection code.**
-This is a successful lab prototype, not Windows support in the FlexBoot CLI.
+The initial comparison is recorded below. The implemented opt-in CLI backend and
+subsequent full-installation results are described in the final section and the
+[Windows guide](WINDOWS.md).
 
 ## Media and isolation
 
@@ -119,13 +121,13 @@ matching ISO boot resources, and a prepared boot-index-2 WIM with `winpeshl.ini`
 startup. Use NTloader's documented stock-GRUB menu handoff, supplying the boot
 volume UUID and the selected WIM path. In WinPE, initialize devices, uniquely
 identify the data volume, attach only the selected ISO, validate its WIM with
-DISM, then start its root Setup executable with explicit WIM selection. Preserve
+DISM, then start its native WinPE Setup executable with explicit WIM selection. Preserve
 fresh logs and an actual ready Setup screen for each attempt. Never expose
 physical disks to the guest.
 
-## Boundaries and next implementation
+## Initial comparison boundaries (2026-10-09)
 
-No full Windows installation, reboot into installed Windows, physical USB,
+At the end of the initial comparison, no full Windows installation, reboot into installed Windows, physical USB,
 Secure Boot, BIOS, ARM64, Server ISO, ESD or split-WIM installation was verified.
 The two images shared a data volume, but a single multi-entry GRUB menu and an
 actual combined USB layout still need integration tests. These image fixtures
@@ -148,3 +150,53 @@ A production Windows backend would therefore require:
 Reuse the existing loader and Windows API; build the small preparation and
 selection layer ourselves. A new Windows bootloader or virtual-disk driver is
 not justified by these results.
+
+
+## Implemented backend and extended validation, 2026-10-10/11
+
+The CLI now prepares an explicit Windows-enabled GPT layout and separate NTFS
+source storage, stages per-image boot resources, records integrity metadata, and
+generates Windows entries alongside Linux entries in the same stock-GRUB menu.
+The ISO-mount helper is independently written around Microsoft's native API;
+NTloader remains a locally supplied, hash-pinned optional runtime. No Ventoy
+dependency or automatic runtime download was introduced.
+
+Extended installation tests exposed a failure that the initial Setup-screen
+probes missed. A USB ESP plus the destination ESP caused BCD system-device
+ambiguity (`0xc0000451`) and Setup access violations (`0xc0000005`). Fixed/removable
+USB variations, a RAM-WIM handoff, and source-only system-store overrides did not
+solve it. A manual override selecting the already chosen destination ESP proved
+the diagnosis, but automatically guessing that destination would be unacceptable.
+
+The tested solution uses a FAT32 **Basic Data** boot partition in the explicitly
+selected Windows layout. Default Linux media still uses an ESP. OVMF boots the
+removable GRUB path from that FAT partition, and Setup sees only the destination's
+new ESP. Firmware support for non-ESP FAT boot is optional, so
+`--windows-boot-layout basic-fat` is required and physical compatibility remains
+pending. See [UEFI 2.11 section 13.3.3](https://uefi.org/specs/UEFI/2.11/13_Protocols_Media_Access.html).
+
+| Extended test | Measured result |
+|---|---|
+| Windows 10 22H2 supplied ISO, new Basic Data USB layout, blank virtual destination | Full installation; destination booted independently to first-run region selection, with source USB disconnected |
+| Windows 11 supplied ISO, same multi-image source layout, blank virtual destination | Full installation; independent destination boot reached first-run region selection, with source USB disconnected |
+| Fresh CLI-created Windows-enabled image: create, Grml add, Windows 10 add, full verify | Passed; Windows Setup ready and Grml live userspace booted from that actual builder output |
+| Two accessible source volumes with the same installation marker and distinct GPT identities | `SOURCE_VOLUMES=2`; startup refused before ISO attachment or Setup |
+| Installation marker removed from an owned CLI-created test image | `SOURCE_VOLUMES=0`; startup refused before Setup; marker restoration and verification are required afterward |
+| Source virtually disconnected after payload validation | Setup rejected its explicit missing installation-WIM path; it did not substitute another installer |
+| Root test suite including default and Windows-enabled loop-image provisioning | 136 tests passed, including creation, inspection and verification; header fixtures test provisioning, not Windows execution |
+
+Both successful fresh installations used the ordinary native Setup UI and its
+automatically created destination partitions. Neither used a manual system-store
+override, a manually enlarged destination ESP, nor a hardware-check bypass.
+Windows 11 used TPM 2.0 and Secure-Boot-capable OVMF with **Secure Boot disabled**;
+this establishes no FlexBoot Secure Boot support. Guests had no network adapter.
+
+The production startup uses `X:\sources\setup.exe /InstallFrom:"<selected WIM>"`
+for both Windows versions. The initial Windows 11 space-form observation applied
+to its ISO-root launcher, a different interface. Preparation explicitly marks the
+validated WIM index 2 as bootable and checks its native Setup resource.
+
+Remaining limits: physical USB firmware/controllers, other Windows families and
+releases, ESD/split-WIM sources, ARM64, BIOS, Secure Boot, and unusual destination
+storage arrangements were not verified. All destructive tests used owned files,
+loop devices, or isolated virtual disks; no physical partition table was changed.

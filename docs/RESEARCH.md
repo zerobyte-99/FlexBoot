@@ -102,7 +102,7 @@ not verified during this pass.
 ## Windows loader lab, 2026-10-09
 
 - [NTloader](https://github.com/grub4dos/ntloader) and its
-  [menu guide](https://github.com/grub4dos/ntloader/blob/master/docs/menu.md)
+  [menu guide](https://github.com/grub4dos/ntloader/blob/main/docs/menu.md)
   document WIM selection through a stock-GRUB handoff and boot volume identity.
 - Microsoft's [OpenVirtualDisk](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-openvirtualdisk)
   and [AttachVirtualDisk](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-attachvirtualdisk)
@@ -115,5 +115,19 @@ not verified during this pass.
   stock-GRUB handoff was attempted; the documented iPXE network route was not.
 
 See [actual results, pinned revisions and limitations](WINDOWS-EXPERIMENTS.md).
-NTloader plus native ISO attachment is preferred for a future optional backend.
+NTloader plus native ISO attachment is used by the explicit optional backend.
 No Ventoy dependency was introduced and no downloaded runtime is shipped.
+
+
+## Windows installation hardening, 2026-10-10/11
+
+- [UEFI 2.11, media access and partition discovery](https://uefi.org/specs/UEFI/2.11/13_Protocols_Media_Access.html), section 13.3.3: support for conforming FAT partitions without the ESP GUID is optional. This bounds the explicit Basic Data boot layout's firmware compatibility.
+- [Microsoft Setup supported platforms](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-supported-platforms-and-cross-platform-deployments?view=windows-10): native WinPE Setup uses its sources executable. Both tested native installers accepted the colon form of InstallFrom.
+- [GetVirtualDiskPhysicalPath](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-getvirtualdiskphysicalpath) and [IOCTL_STORAGE_GET_DEVICE_NUMBER](https://learn.microsoft.com/en-us/windows/win32/api/winioctl/ni-winioctl-ioctl_storage_get_device_number): the helper binds a drive letter to the actual ISO attachment's device type and number.
+- [BCDEdit system-store option](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/bcdedit-command-line-options?view=windows-11) and [Microsoft NTSTATUS definitions](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-erref/596a1078-e883-4972-9bbc-49e60bebca55): temporary system-store selection helped diagnose ambiguous EFI system devices; no automatic destination-selection workaround was adopted.
+- The installed wimlib info interface's `--boot` option explicitly selects the same validated image index used for preparation. Both original supplied boot WIMs already selected index 2.
+
+Full Windows 10/11 installation and independent first-run boot were verified on
+disposable virtual targets with the Basic Data source layout. The detailed
+[experiment record](WINDOWS-EXPERIMENTS.md) distinguishes full installs, diagnostic
+workarounds, provisioning fixtures, failure cases, and remaining hardware limits.

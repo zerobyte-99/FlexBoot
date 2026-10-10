@@ -6,7 +6,7 @@ FlexBoot is split along trust and lifecycle boundaries.
 
 `devices.py` parses explicitly selected `lsblk --json --bytes` columns into immutable device models. `safety.py` walks both parent names and the returned dependency tree to protect the physical ancestors of `/`, `/boot`, `/boot/efi`, and swap. It snapshots resolved path, major/minor, size, serial, and a stable by-id path where available.
 
-`targets.py` attaches sparse files through `losetup --partscan`; its context manager always attempts detach. `disk.py` creates a two-partition GPT, waits for udev, and rediscovers children from block metadata. It never guesses `sdb1` or `nvme0n1p1`. The ESP uses the FAT-compatible label `FLEXBOOTEFI`; its GPT partition name is `FlexBoot EFI`. `mounts.py` creates private temporary mountpoints and unmounts them on normal exit, errors, or interruption.
+`targets.py` attaches sparse files through `losetup --partscan`; its context manager always attempts detach. `disk.py` creates the default two-partition GPT, waits for udev, and rediscovers children from block metadata. It never guesses `sdb1` or `nvme0n1p1`. The ESP uses the FAT-compatible label `FLEXBOOTEFI`; its GPT partition name is `FlexBoot EFI`. `mounts.py` creates private temporary mountpoints and unmounts them on normal exit, errors, or interruption.
 
 ## Bootloader backend
 
@@ -32,3 +32,29 @@ targets. This avoids vendor initramfs whitespace parsing problems without a seco
 copy, filename-based profile detection, or changes to the manifest schema.
 
 No function builds a shell command. Every external command receives an argv list with `shell=False`.
+
+
+## Optional Windows backend
+
+`windows.py` inspects ISO9660/UDF resources with 7z, validates x64 boot-index-2
+WinPE metadata and native Setup, prepares a WIM with wimlib, and writes a small
+deterministic boot archive. Intact Windows ISOs remain on a separately reserved
+NTFS partition. `windows.json` in ext4 metadata records filesystem identities,
+boot partition role, runtime hashes, and per-image resource inventories.
+`windows.cfg` contains only Windows entries and is included by the stable base
+configuration. Source files retain their original names; internal Windows paths
+use hexadecimal IDs to avoid command-language filename interpretation.
+
+The explicit Windows layout tags the FAT32 boot partition as Basic Data to avoid
+adding an ESP candidate to Windows Setup's destination discovery. Its firmware
+requirement is documented in the Windows guide; default Linux creation retains
+an ESP. Creation validates the requested partition roles before formatting, and
+existing-media access reconciles the actual role with Windows metadata.
+
+The small `assets/windows_mount.c` helper dynamically loads the system virtdisk
+API, attaches only the selected ISO read-only, and resolves its returned physical
+CD-ROM device through storage-device numbers. WinPE requires exactly one source
+marker, validates the selected payload through DISM, then launches native Setup
+with an explicit installation WIM. Destination selection remains in Microsoft's
+UI. Add/replace/remove use staged resources and rollback; full verification checks
+recorded files, hashes, runtime, marker and generated menu.

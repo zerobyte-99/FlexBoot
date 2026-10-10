@@ -45,6 +45,9 @@ export theme
 if [ -f ($root)/boot/grub/generated.cfg ]; then
   source ($root)/boot/grub/generated.cfg
 fi
+if [ -f ($root)/boot/grub/windows.cfg ]; then
+  source ($root)/boot/grub/windows.cfg
+fi
 menuentry 'UEFI Firmware Settings' {{ fwsetup }}
 menuentry 'Reboot' {{ reboot }}
 menuentry 'Power Off' {{ halt }}
