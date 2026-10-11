@@ -138,6 +138,18 @@ def parser() -> argparse.ArgumentParser:
     sync.add_argument("target", type=Path)
     _add_output_options(sync, dry_run=True)
 
+    menu = commands.add_parser("menu", help="show or customize boot menu labels and ordering")
+    menu_commands = menu.add_subparsers(dest="menu_command", required=True)
+    for name in ("list", "label", "order", "reset"):
+        sub = menu_commands.add_parser(name)
+        sub.add_argument("target", type=Path)
+        if name == "label":
+            sub.add_argument("entry", help="ISO filename or ID from menu list")
+            sub.add_argument("label", nargs="?", help="new label; omit to restore the default")
+        if name == "order":
+            sub.add_argument("entries", nargs="*", help="IDs or filenames, first to last; omit to restore alphabetical order")
+        _add_output_options(sub, dry_run=name != "list")
+
     theme = commands.add_parser("theme", help="list or select a GRUB background")
     theme.add_argument("target", nargs="?", type=Path, help="FlexBoot disk, such as /dev/sdb")
     theme.add_argument("selection", nargs="?", help="built-in name, number, or custom PNG path")
@@ -407,6 +419,29 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
     return 0
 
 
+def command_menu(args: argparse.Namespace) -> int:
+    from .menu import configure, listing, validate_label
+    action = args.menu_command
+    if action == "label" and args.label is not None:
+        validate_label(args.label)
+    if action != "list" and args.dry_run:
+        payload = {"action": action, "target": str(args.target), "persistent_changes": False,
+                   "target_validated": False}
+        print(json.dumps(payload, indent=2) if args.json else f"Dry run: would change menu {action} on {args.target}. No changes made.")
+        return 0
+    runner = Runner(verbose=args.verbose)
+    if action != "list":
+        require_root()
+        preflight("media")
+    with _media_target(args.target, runner, readonly=action == "list") as (paths, _device):
+        result = listing(paths) if action == "list" else configure(
+            paths, action, entry=getattr(args, "entry", None), label=getattr(args, "label", None),
+            order=getattr(args, "entries", ()), runner=runner)
+    print(json.dumps(result, indent=2) if args.json else "\n".join(
+        f"{i}. [{item['os']}] {item['label']}\n   {item['id']}" for i, item in enumerate(result, 1)))
+    return 0
+
+
 def command_theme(args: argparse.Namespace) -> int:
     themes = available_themes()
     if args.list:
@@ -549,6 +584,7 @@ def dispatch(args: argparse.Namespace) -> int:
     if args.command == "create": return command_create(args)
     if args.command in {"list", "status", "inspect", "verify"}: return _read_command(args, args.command)
     if args.command in {"add", "remove", "sync"}: return _mutating_media(args, args.command)
+    if args.command == "menu": return command_menu(args)
     if args.command == "theme": return command_theme(args)
     if args.command == "image": return command_image(args)
     raise FlexBootError(f"Unknown command: {args.command}")

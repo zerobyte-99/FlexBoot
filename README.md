@@ -386,6 +386,38 @@ replacement/removal, diagnostics, and measured [test results](docs/WINDOWS-EXPER
 
 Actual 1280×800 QEMU/OVMF capture from the media used for the Windows installation tests.
 
+## Customize boot menu names and order
+
+Every image entry carries an OS tag such as `[Linux]` or `[Windows]`.
+Display names and ordering apply across both families; original ISO filenames
+and boot parameters stay unchanged.
+
+![Actual GRUB menu with custom labels, Windows-first ordering, and OS tags](docs/images/custom-menu.png)
+
+Captured in QEMU/OVMF from a CLI-built image after changing labels and order,
+then running `sync` and full integrity verification.
+
+```bash
+python3 -m flexboot menu list /dev/sdX
+sudo python3 -m flexboot menu label /dev/sdX ubuntu.iso "Ubuntu Desktop"
+sudo python3 -m flexboot menu label /dev/sdX windows11.iso "Windows 11 Setup"
+sudo python3 -m flexboot menu order /dev/sdX windows11.iso ubuntu.iso
+```
+
+The listed entries appear first in the supplied order. Omitted and newly added
+images follow alphabetically by display label. If both families use the same
+filename, use the ID from `menu list`, for example `Windows:windows11.iso`.
+Firmware settings, reboot, and shutdown remain at the bottom.
+
+Omit the label to restore one default name; omit entries from `menu order` to
+restore alphabetical ordering. `menu reset TARGET` resets both settings.
+All changes take effect immediately and survive `sync`, replacement, removal,
+and re-adding an image with the same filename. Settings are stored in
+`.flexboot/menu.json`; `verify` checks the resulting generated menu.
+Mutating commands support `--dry-run`, and all menu commands support `--json`.
+Existing drives can use these commands directly; `sync` also upgrades their
+configuration to the shared menu format. Raw image paths work in place of devices.
+
 ## Raw images and QEMU
 
 The raw-image path uses the same partitioning, formatting, GRUB, theme, and media code as physical targets:

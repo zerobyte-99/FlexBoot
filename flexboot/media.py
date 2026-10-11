@@ -227,20 +227,43 @@ def deploy_theme(efi: Path, background: Path | None = None, layout: str = "flexb
         shutil.copyfile(host_font, unicode_font)
 
 
-def regenerate(paths: MediaPaths, manifest: Manifest, runner: Runner | None = None) -> None:
-    destination = paths.grub_dir / "generated.cfg"
-    candidate = destination.with_name("generated.cfg.new")
+def menu_config(paths: MediaPaths, manifest: Manifest, windows_state=None) -> str:
+    from .menu import load_settings
+    from .windows import load
+    return generated_config(manifest.isos, load(paths) if windows_state is None else windows_state, load_settings(paths))
+
+
+def regenerate(paths: MediaPaths, manifest: Manifest, runner: Runner | None = None, *, windows_state=None) -> None:
+    destinations = {
+        paths.grub_dir / "generated.cfg": menu_config(paths, manifest, windows_state),
+        paths.grub_dir / "grub.cfg": base_config(manifest.data_filesystem_uuid),
+    }
+    originals = {p: p.read_text() if p.exists() else None for p in destinations}
+    candidates = []
+    published = []
     created_aliases = []
     try:
-        atomic_text(candidate, generated_config(manifest.isos))
-        validate_config(candidate, runner)
+        for destination, text in destinations.items():
+            candidate = destination.with_name(destination.name + ".new")
+            candidates.append(candidate)
+            atomic_text(candidate, text)
+            validate_config(candidate, runner)
         created_aliases = ensure_aliases(paths.data, (item.filename for item in manifest.isos))
-        os.replace(candidate, destination)
+        for destination, candidate in zip(destinations, candidates):
+            os.replace(candidate, destination)
+            published.append(destination)
     except BaseException:
         rollback_aliases(created_aliases)
+        for path in published:
+            text = originals[path]
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_text(path, text)
         raise
     finally:
-        candidate.unlink(missing_ok=True)
+        for candidate in candidates:
+            candidate.unlink(missing_ok=True)
 
 
 @dataclass(frozen=True)
@@ -413,7 +436,7 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
         if theme.is_dir():
             shutil.copytree(theme, stage.grub_dir / "themes/flexboot")
         deploy_theme(work, configured_background(paths), str(setting["layout"]))
-        for name, text in (("grub.cfg", base_config(old.data_filesystem_uuid)), ("generated.cfg", generated_config(old.isos))):
+        for name, text in (("grub.cfg", base_config(old.data_filesystem_uuid)), ("generated.cfg", menu_config(paths, old))):
             atomic_text(stage.grub_dir / name, text)
             validate_config(stage.grub_dir / name, runner)
         created_aliases = ensure_aliases(paths.data, (item.filename for item in old.isos))
@@ -487,9 +510,12 @@ def verify(paths: MediaPaths, *, full_hash: bool = True) -> list[str]:
                 problems.append(f"Cannot verify ISO profile for {record.filename}: {exc}")
     problems.extend(alias_problems(paths.data, (item.filename for item in manifest.isos)))
     generated = paths.grub_dir / "generated.cfg"
-    expected = generated_config(manifest.isos)
-    if not generated.exists() or generated.read_text(encoding="utf-8") != expected:
-        problems.append("Generated GRUB menu is stale or missing")
+    try:
+        expected = menu_config(paths, manifest)
+        if not generated.exists() or generated.read_text(encoding="utf-8") != expected:
+            problems.append("Generated GRUB menu is stale or missing")
+    except (FlexBootError, OSError) as exc:
+        problems.append(str(exc))
     base = paths.grub_dir / "grub.cfg"
     if not base.is_file() or manifest.data_filesystem_uuid not in base.read_text(encoding="utf-8"):
         problems.append("Base GRUB configuration is missing or has the wrong data UUID")
@@ -523,7 +549,9 @@ def inspect(paths: MediaPaths, *, full_hash: bool = False) -> dict[str, object]:
     manifest = Manifest.load(paths.manifest)
     from .windows import load as load_windows
     windows = load_windows(paths)
+    from .menu import listing
     return {
+        "menu": listing(paths),
         "windows": windows,
         "boot_partition_role": paths.boot_partition_role,
         "version": __version__, "data_filesystem_uuid": manifest.data_filesystem_uuid,

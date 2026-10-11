@@ -21,6 +21,10 @@ class ImageIntegrationTests(unittest.TestCase):
             self.assertEqual(main(["image", "create", str(image), "--size", "2G"]), 0)
             self.assertEqual(main(["image", "inspect", str(image), "--json"]), 0)
             self.assertGreater(image.stat().st_size, 1024**3)
+            self.assertEqual(main(['menu', 'list', str(image), '--json']), 0)
+            self.assertEqual(main(['menu', 'order', str(image)]), 0)
+            self.assertEqual(main(['menu', 'reset', str(image)]), 0)
+            self.assertEqual(main(['verify', str(image), '--json']), 0)
 
     @unittest.skipUnless(os.environ.get("FLEXBOOT_RUN_IMAGE_TESTS") == "1", "set FLEXBOOT_RUN_IMAGE_TESTS=1 as root to run loop-image integration")
     def test_explicit_windows_layout_provisioning_and_verification(self):

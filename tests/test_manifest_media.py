@@ -76,7 +76,7 @@ class ManifestTests(unittest.TestCase):
             paths.iso_dir.mkdir(parents=True); paths.grub_dir.mkdir(parents=True)
             iso = paths.iso_dir / "one.iso"; iso.write_bytes(b"iso")
             record = ISORecord("one.iso", 3, sha256_file(iso), "debian-live", "/live/vmlinuz", "/live/initrd")
-            manifest = Manifest(data_filesystem_uuid="uuid", isos=[record]); manifest.save(paths.manifest)
+            manifest = Manifest(data_filesystem_uuid="abcd-1234", isos=[record]); manifest.save(paths.manifest)
             regenerate(paths, manifest)
             with patch("flexboot.media.validate_config", side_effect=FlexBootError("bad menu")):
                 with self.assertRaises(FlexBootError): remove_iso(paths, "one.iso")

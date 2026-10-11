@@ -39,6 +39,8 @@ class WindowsTests(unittest.TestCase):
         for name,key in [('ntloader','ntloader_sha256'),('flexboot-win.exe','helper_sha256')]:
             file=self.paths.grub_dir/'windows'/name;pe(file);self.state[key]=windows.sha256_file(file)
         (self.paths.windows/'.flexboot-windows'/f'{self.token}.marker').write_text(self.paths.windows_uuid+'\n')
+        from flexboot.manifest import Manifest
+        Manifest(data_filesystem_uuid="1234-abcd").save(self.paths.manifest)
         windows.publish(self.paths,self.state,FakeRunner())
 
     def test_clean_empty_windows_media(self):
@@ -257,6 +259,38 @@ class WindowsTests(unittest.TestCase):
         self.state['images'][0]['size']=99
         windows.state_path(self.paths).write_text(json.dumps(self.state))
         with self.assertRaises(MediaStateError):windows.load(self.paths)
+
+    def test_custom_label_survives_windows_publication_and_removal(self):
+        from flexboot.menu import configure, load_settings
+        source = Path(self.temp.name) / 'test.iso'
+        source.write_bytes(b'0' * 4096)
+        self.fake_add(source)
+        configure(self.paths, 'label', entry='Windows:test.iso', label='Windows installation', runner=FakeRunner())
+        configure(self.paths, 'order', order=['Windows:test.iso'], runner=FakeRunner())
+        self.fake_add(source, replace=True)
+        self.assertIn('[Windows] Windows installation', (self.paths.grub_dir / 'generated.cfg').read_text())
+        self.assertNotIn('source ($root)/boot/grub/windows.cfg', (self.paths.grub_dir / 'grub.cfg').read_text())
+        windows.remove(self.paths, source.name, FakeRunner())
+        self.assertNotIn('menuentry ', (self.paths.grub_dir / 'generated.cfg').read_text())
+        self.assertEqual(load_settings(self.paths)['labels']['Windows:test.iso'], 'Windows installation')
+
+    def test_combined_menu_publication_failure_rolls_back_every_file(self):
+        import os
+        from copy import deepcopy
+        changed = deepcopy(self.state)
+        changed['images'] = [{'filename': 'new.iso', 'id': 'c' * 64}]
+        files = [windows.state_path(self.paths), self.paths.grub_dir / 'windows.cfg',
+                 self.paths.grub_dir / 'generated.cfg', self.paths.grub_dir / 'grub.cfg']
+        original = [p.read_bytes() for p in files]
+        replace = os.replace
+        def fail_generated(source, destination):
+            if Path(source).name == 'generated.cfg.new':
+                raise OSError('injected publication failure')
+            return replace(source, destination)
+        with patch('flexboot.windows.os.replace', side_effect=fail_generated), self.assertRaises(OSError):
+            windows.publish(self.paths, changed, FakeRunner())
+        self.assertEqual([p.read_bytes() for p in files], original)
+        self.assertFalse(list(self.paths.grub_dir.glob('*.new')))
 
     def test_stale_windows_menu_detected(self):
         (self.paths.grub_dir/'windows.cfg').write_text('bad menu')

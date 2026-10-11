@@ -10,7 +10,7 @@ FlexBoot is split along trust and lifecycle boundaries.
 
 ## Bootloader backend
 
-`grub.py` calls host `grub-install` with `x86_64-efi`, explicit EFI and boot directories, `--removable`, and `--no-nvram`. It checks for the standard `EFI/BOOT/BOOTX64.EFI` result. `grub.cfg` is stable and locates the ext4 data partition by UUID. `generated.cfg` contains only sorted ISO entries. Configuration is checked with `grub-script-check` when installed.
+`grub.py` calls host `grub-install` with `x86_64-efi`, explicit EFI and boot directories, `--removable`, and `--no-nvram`. It checks for the standard `EFI/BOOT/BOOTX64.EFI` result. `grub.cfg` is stable and locates the ext4 data partition by UUID. `generated.cfg` contains the shared, ordered Linux and Windows ISO entries. Configuration is checked with `grub-script-check` when installed.
 
 ## ISO profiles
 
@@ -41,8 +41,9 @@ WinPE metadata and native Setup, prepares a WIM with wimlib, and writes a small
 deterministic boot archive. Intact Windows ISOs remain on a separately reserved
 NTFS partition. `windows.json` in ext4 metadata records filesystem identities,
 boot partition role, runtime hashes, and per-image resource inventories.
-`windows.cfg` contains only Windows entries and is included by the stable base
-configuration. Source files retain their original names; internal Windows paths
+`windows.cfg` retains a standalone Windows fragment for verification; the stable
+configuration sources only `generated.cfg`, so entries appear once and can be
+ordered across both families. Source files retain their original names; internal Windows paths
 use hexadecimal IDs to avoid command-language filename interpretation.
 
 The explicit Windows layout tags the FAT32 boot partition as Basic Data to avoid
@@ -58,3 +59,14 @@ marker, validates the selected payload through DISM, then launches native Setup
 with an explicit installation WIM. Destination selection remains in Microsoft's
 UI. Add/replace/remove use staged resources and rollback; full verification checks
 recorded files, hashes, runtime, marker and generated menu.
+
+## Menu presentation settings
+
+`menu.py` owns schema-1 `.flexboot/menu.json`, with OS-qualified entry IDs,
+optional labels and an explicit order list. It validates all settings and rejects
+control characters and symlinked settings files. Labels are GRUB-quoted and do
+not influence resource paths or boot parameters. Unlisted entries follow sorted
+by display label with stable ID tie-breaking. Saved preferences for removed
+images are retained for re-addition; reset clears them. Configuration publication
+validates candidate files before writing, with rollback on failure. Windows
+publication and Linux regeneration both rebuild the combined menu.

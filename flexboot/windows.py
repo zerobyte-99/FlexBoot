@@ -282,11 +282,11 @@ def load(paths) -> dict | None:
         raise MediaStateError(f'Malformed Windows metadata: {exc}') from exc
 
 
-def menu(state: dict) -> str:
+def menu(state: dict, labels: dict | None = None) -> str:
     lines = ['# FlexBoot Windows entries. Prepared resources; source ISOs remain intact.', '']
     for record in sorted(state['images'], key=lambda r:r['filename'].casefold()):
         image_id = record['id']
-        lines.extend([f"menuentry {grub_quote(record['filename'] + ' — Windows installer')} {{",
+        lines.extend([f"menuentry {grub_quote('[Windows] ' + (labels or {}).get(record['filename'], record['filename'] + ' — Windows installer'))} {{",
                       '  insmod ntfs', f"  search --no-floppy --fs-uuid --set=flexboot_efi {state['efi_uuid']}", f"  search --no-floppy --fs-uuid --set=flexboot_windows {state['uuid']}",
                       f"  linux ($flexboot_efi)/boot/grub/windows/ntloader uuid={state['uuid']} wim=/windows/{image_id}/boot.wim hires=no gfxmode=1024x768",
                       f'  initrd ($flexboot_windows)/windows/{image_id}/initrd.cpio', '}', ''])
@@ -294,14 +294,38 @@ def menu(state: dict) -> str:
 
 
 def publish(paths, state: dict, runner: Runner) -> None:
-    destination = paths.grub_dir / 'windows.cfg'
-    candidate = destination.with_suffix('.cfg.new')
+    from .manifest import Manifest
+    from .media import menu_config
+    from .grub import base_config
+    manifest = Manifest.load(paths.manifest)
+    contents = {
+        state_path(paths): json.dumps(state, indent=2, sort_keys=True) + '\n',
+        paths.grub_dir / 'windows.cfg': menu(state),
+        paths.grub_dir / 'generated.cfg': menu_config(paths, manifest, state),
+        paths.grub_dir / 'grub.cfg': base_config(manifest.data_filesystem_uuid),
+    }
+    originals = {path: path.read_text() if path.exists() else None for path in contents}
+    candidates = []
     try:
-        atomic_text(candidate, menu(state)); validate_config(candidate, runner)
-        atomic_text(state_path(paths), json.dumps(state, indent=2, sort_keys=True)+'\n')
-        os.replace(candidate, destination)
+        # Validate every fragment before publishing any state or menu changes.
+        for path, text in contents.items():
+            candidate = path.with_name(path.name + '.new')
+            candidates.append(candidate)
+            atomic_text(candidate, text)
+            if path.suffix == '.cfg':
+                validate_config(candidate, runner)
+        for path, candidate in zip(contents, candidates):
+            os.replace(candidate, path)
+    except BaseException:
+        for path, text in originals.items():
+            if text is None:
+                path.unlink(missing_ok=True)
+            else:
+                atomic_text(path, text)
+        raise
     finally:
-        candidate.unlink(missing_ok=True)
+        for candidate in candidates:
+            candidate.unlink(missing_ok=True)
 
 
 def initialize(paths, ntloader: Path, helper: Path, expected: str, runner: Runner) -> None:
@@ -348,7 +372,7 @@ def verify(paths, *, full_hash: bool = True, check_menu: bool = True) -> list[st
             cfg=paths.grub_dir/'windows.cfg';regular(cfg,paths.efi)
             if cfg.read_text()!=menu(state):problems.append('Windows GRUB menu is stale')
             base=paths.grub_dir/'grub.cfg'
-            if base.exists() and 'source ($root)/boot/grub/windows.cfg' not in base.read_text():
+            if base.exists() and 'source ($root)/boot/grub/generated.cfg' not in base.read_text():
                 problems.append('Base GRUB configuration does not include Windows entries')
         return problems
     except (FlexBootError,OSError) as exc:
