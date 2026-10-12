@@ -1,5 +1,13 @@
 # Development
 
+## Versioning
+
+Increment the application version before every new commit that will be pushed.
+Update both `flexboot/__init__.py` and `pyproject.toml` in that commit and verify
+`python3 -m flexboot --version`. Use a patch increment by default unless a minor
+or major release is explicitly chosen. Commit and push share the same version.
+Historical version values in migration test fixtures should remain unchanged.
+
 Run all standard-library tests and syntax checks:
 
 ```bash
