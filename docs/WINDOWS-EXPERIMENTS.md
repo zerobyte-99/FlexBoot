@@ -200,3 +200,13 @@ Remaining limits: physical USB firmware/controllers, other Windows families and
 releases, ESD/split-WIM sources, ARM64, BIOS, Secure Boot, and unusual destination
 storage arrangements were not verified. All destructive tests used owned files,
 loop devices, or isolated virtual disks; no physical partition table was changed.
+
+## 2026-10-14 — USB-backed 0.7.0 regression pass
+
+An existing Windows-enabled physical USB supplied seven Linux ISOs and the
+Windows 10 22H2 Swedish image. All seven Linux entries booted to live userspace
+or an installer in QEMU/OVMF. Windows completed installation to a fresh owned
+virtual disk, then booted independently to first-run region selection with no
+USB storage attached to the guest. The physical USB remained read-only behind
+writable guest overlays; native firmware/controller compatibility is still a
+separate hardware test. See the [exact image matrix and test scope](TESTING-0.7.0.md).

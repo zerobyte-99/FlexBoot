@@ -59,16 +59,18 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 | Family | Detection and boot method | Current validation |
 |---|---|---|
 | Ubuntu desktop/live | Casper kernel, initrd, and live filesystem; complete layered roots also recognized | Profile tests; layered desktop hardware pending |
-| Ubuntu Server | Current casper server layout and server loopback arguments | Real ISO and hardware boot |
-| Debian Live / Kali Live | Debian live filesystem; `findiso=` | Profile tests |
+| Ubuntu Server | Current casper server layout and server loopback arguments | Real ISO and hardware boot; 26.04.1 QEMU installer |
+| Debian Live / Kali Live | Debian live filesystem; `findiso=` | Kali 2019.3, 2022.2, and 2026.2 QEMU desktops |
 | SystemRescue | Product layout and vendor `loopback.cfg` | Profile tests; hardware pending |
 | Arch Linux | Archiso layout and vendor `loopback.cfg` | Profile tests; hardware pending |
-| Rescuezilla | Product marker plus casper resources | Publisher hash and real-image inspection; hardware pending |
-| Clonezilla Live | Product marker plus Debian Live resources | Publisher hash and real-image inspection; hardware pending |
-| Fedora Live | LiveOS, volume label, and dracut loader resources | Publisher hash and Fedora 44 inspection; hardware pending |
+| Rescuezilla | Product marker plus casper resources | Rescuezilla 2.6.2 QEMU desktop; hardware pending |
+| Clonezilla Live | Product marker plus Debian Live resources | Clonezilla 3.3.3-37 QEMU live UI; hardware pending |
+| Fedora Live | LiveOS, volume label, and dracut loader resources | Fedora 44 QEMU GNOME desktop; hardware pending |
 | Grml amd64 | Matching flavour resources and boot ID; live-boot `findiso=` | Grml small 2026.09 QEMU login; hardware pending |
 | Gentoo amd64 Live | Current dracut layout and matching live-root label | Minimal 20260913 QEMU login; hardware pending |
 | Windows x64 WIM installers, opt-in | Prepared WinPE, local NTloader, native read-only ISO API | Windows 10/11 full installations and independent QEMU boots; USB hardware pending |
+
+See the [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
 
 FlexBoot rejects incomplete and unknown layouts instead of producing speculative menu entries. Installer-only Kali images and Fedora network installers do not match the live profiles.
 
