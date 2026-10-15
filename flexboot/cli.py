@@ -179,6 +179,7 @@ def parser() -> argparse.ArgumentParser:
     winadd.add_argument("isos", type=Path, nargs="+")
     winadd.add_argument("--replace", action="store_true")
     winadd.add_argument("--continue-on-error", action="store_true")
+    winadd.add_argument("--winpe-from", type=Path, help="experimental: boot an older x64 installer using WinPE from a local Windows 10 ISO")
     _add_output_options(winadd, dry_run=True)
     winremove = windows_commands.add_parser("remove", help="remove an installed Windows ISO and its prepared resources")
     winremove.add_argument("target", type=Path)
@@ -361,7 +362,11 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
                 try:
                     if args.command == "windows":
                         from .windows import inspect_source
-                        inspect_source(source, runner)
+                        if args.winpe_from is not None:
+                            inspect_source(args.winpe_from, runner)
+                            inspect_source(source, runner, borrowed_winpe=True)
+                        else:
+                            inspect_source(source, runner)
                         from types import SimpleNamespace
                         match = SimpleNamespace(profile="windows-installer")
                     else:
@@ -371,12 +376,17 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
                     matches.append({"file": str(source), "status": "failed", "reason": str(exc)})
                     stopped = not args.continue_on_error
             payload = {"action": action, "target": str(args.target), "isos": matches, "persistent_changes": False, "target_validated": False, "free_space_checked": False}
+            if args.command == "windows" and args.winpe_from is not None:
+                payload["winpe_from"] = str(args.winpe_from)
+                payload["winpe_build_checked"] = False
             if args.json:
                 print(json.dumps(payload, indent=2))
             else:
                 for item in matches:
                     print(f"{item['status']}: {item['file']}" + (f" — {item['reason']}" if "reason" in item else ""))
                 print("Source-only dry run; target, duplicates, and free space were not checked. No changes made.")
+                if args.command == "windows" and args.winpe_from is not None:
+                    print(f"Borrowed WinPE source: {args.winpe_from}. WIM builds and Setup compatibility were not checked.")
             return 2 if any(item["status"] == "failed" for item in matches) else 0
         else:
             print(json.dumps({"action": action, "target": str(args.target), "persistent_changes": False}, indent=2) if args.json else f"Dry run: would {action} {args.target}. No changes made.")
@@ -394,8 +404,11 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
             outcomes = []
             for source in args.isos:
                 try:
-                    _record, status = windows.add(paths, source, runner, replace=args.replace)
-                    outcomes.append({"file":str(source), "status":status})
+                    record, status = windows.add(paths, source, runner, replace=args.replace, winpe_from=args.winpe_from)
+                    outcome = {"file":str(source), "status":status}
+                    if 'winpe_source' in record:
+                        outcome['winpe_source'] = record['winpe_source']
+                    outcomes.append(outcome)
                 except (FlexBootError, OSError) as exc:
                     outcomes.append({"file":str(source), "status":"failed", "reason":str(exc)})
                     if not args.continue_on_error or isinstance(exc, (SafetyError, MediaStateError, OSError)):

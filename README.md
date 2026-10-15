@@ -72,9 +72,9 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 | Grml amd64 | Matching flavour resources and boot ID; live-boot `findiso=` | Grml small 2026.09 QEMU login; hardware pending |
 | Gentoo amd64 Live | Current dracut layout and matching live-root label | Minimal 20260913 QEMU login; hardware pending |
 | Windows 10/11 x64 WIM installers, opt-in | Prepared WinPE, local NTloader, native read-only ISO API | 10/11 full installations and independent QEMU boots; 1803 Setup/disk detection; supplied Windows 10 hardware boot reported |
-| Windows Server x64 WIM installers, opt-in | Same optional Windows backend | Server 2019 full installation and independent first-run boot; Server 2022 Setup/disk detection |
+| Windows Server x64 WIM installers, opt-in | Native WinPE, or explicit Windows 10 WinPE donor for older installers | Server 2012 R2, 2016 and 2019 full installations and independent first-run boots; Server 2022 Setup/disk detection |
 
-See the [compatibility expansion results](docs/TESTING-0.7.2.md) and [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
+See the [older Windows results](docs/TESTING-0.7.3.md), [compatibility expansion results](docs/TESTING-0.7.2.md) and [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
 
 FlexBoot rejects incomplete and unknown layouts instead of producing speculative menu entries. Installer-only Kali images and Fedora network installers do not match the live profiles.
 
@@ -385,6 +385,9 @@ sudo flexboot verify ./out/windows.img
 Each Windows entry boots its matching prepared WinPE, uniquely identifies the
 source volume, mounts only the selected ISO read-only, and supplies Setup with an
 explicit installation WIM. Choose the destination in Microsoft's Setup UI.
+Older x64 installers can explicitly borrow Windows 10 WinPE using
+`windows add ... --winpe-from windows10.iso`; see the [older Windows test results](docs/TESTING-0.7.3.md).
+Windows 7 remains excluded pending validation.
 ESD, ARM64, BIOS, Secure Boot, and arbitrary Windows images are not supported.
 See the [Windows guide](docs/WINDOWS.md) for dependencies, physical creation,
 replacement/removal, diagnostics, and measured [test results](docs/WINDOWS-EXPERIMENTS.md).

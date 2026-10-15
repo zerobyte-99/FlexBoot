@@ -26,6 +26,9 @@ REQUIRED = ('efi/boot/bootx64.efi', 'boot/boot.sdi', 'sources/boot.wim', 'source
 # ISO attachment exists on Windows 8, but removable multi-partition USB access
 # requires WinPE 10 version 1703. Older PE exposes only the boot partition.
 MIN_WINPE_BUILD = 15063
+MAX_DONOR_WINPE_BUILD = 19045
+# Windows 7 remains excluded pending installed-OS firmware validation.
+MIN_LEGACY_BUILD = 9200
 
 
 def identifier(filename: str) -> str:
@@ -107,7 +110,7 @@ def archive_entries(text: str) -> dict[str, tuple[str, int]]:
     return result
 
 
-def inspect_source(source: Path, runner: Runner | None = None) -> dict:
+def inspect_source(source: Path, runner: Runner | None = None, *, borrowed_winpe: bool = False) -> dict:
     validate_filename(source.name)
     if not source.is_file():
         raise FlexBootError(f'ISO is not a regular file: {source}')
@@ -116,12 +119,13 @@ def inspect_source(source: Path, runner: Runner | None = None) -> dict:
     if not re.search(r'^Type = (?:Iso|Udf)$', listing, re.MULTILINE | re.IGNORECASE):
         raise FlexBootError('Windows sources must be ISO9660/UDF images, not renamed archives')
     entries = archive_entries(listing)
-    missing = [name for name in REQUIRED if name not in entries or not entries[name][1]]
+    required = ('sources/boot.wim', 'sources/install.wim', 'sources/setup.exe', 'setup.exe') if borrowed_winpe else REQUIRED
+    missing = [name for name in required if name not in entries or not entries[name][1]]
     if missing:
         raise FlexBootError('Not a supported Windows x64 WIM installer: missing ' + ', '.join(missing))
-    if any(entries[name][1] > source.stat().st_size for name in REQUIRED):
+    if any(entries[name][1] > source.stat().st_size for name in required):
         raise FlexBootError('ISO resource is larger than its containing image')
-    if any(entries[name][1] > 16 * 1024**2 for name in ('boot/boot.sdi', 'efi/boot/bootx64.efi')):
+    if any(entries[name][1] > 16 * 1024**2 for name in ('boot/boot.sdi', 'efi/boot/bootx64.efi', 'sources/setup.exe') if name in entries):
         raise FlexBootError('Windows boot resource exceeds its size limit')
     if entries['sources/boot.wim'][1] > 2 * 1024**3:
         raise FlexBootError('Windows boot WIM exceeds the supported 2 GiB limit')
@@ -137,7 +141,7 @@ def extract(source: Path, entry: tuple[str, int], destination: Path) -> None:
         raise FlexBootError(f'Failed to extract ISO resource: {entry[0]}')
 
 
-def wim_info(path: Path, runner: Runner) -> int:
+def wim_info(path: Path, runner: Runner, *, minimum_build: int = MIN_WINPE_BUILD) -> int:
     with tempfile.TemporaryDirectory(prefix='flexboot-wim-info-') as raw:
         xml = Path(raw) / 'info.xml'
         runner.run(['wimlib-imagex', 'info', path, f'--extract-xml={xml}'], mutate=True)
@@ -150,8 +154,9 @@ def wim_info(path: Path, runner: Runner) -> int:
         if image.findtext('WINDOWS/ARCH') != '9':
             raise ValueError('boot index 2 must be x86-64')
         build = int(image.findtext('WINDOWS/VERSION/BUILD', '0'))
-        if build < MIN_WINPE_BUILD:
-            raise ValueError(f'WinPE build must be >= {MIN_WINPE_BUILD} (Windows 10 version 1703) for multi-partition removable USB support')
+        if build < minimum_build:
+            reason = ' for multi-partition removable USB support' if minimum_build == MIN_WINPE_BUILD else ''
+            raise ValueError(f'WinPE build must be >= {minimum_build}{reason}')
         return build
     except (ET.ParseError, ValueError, StopIteration) as exc:
         raise FlexBootError(f'Unsupported WinPE WIM metadata: {exc}') from exc
@@ -177,12 +182,13 @@ def cpio(files: dict[str, Path], destination: Path) -> None:
         output.flush(); os.fsync(output.fileno())
 
 
-def startup(token: str, image_id: str, build: int) -> str:
+def startup(token: str, image_id: str, build: int, *, source_setup: bool = False) -> str:
     if not DIGEST.fullmatch(token) or not DIGEST.fullmatch(image_id):
         raise SafetyError('Unsafe Windows media/image identifier')
     # The WinPE-native Setup parser uses the colon form, including Windows 11.
     # The ISO-root Windows 11 launcher's space form is a different interface.
     argument = '/InstallFrom:'
+    setup = r'%FBSOURCE%\sources\setup.exe' if source_setup else r'%SYSTEMDRIVE%\sources\setup.exe'
     # All paths in this program are generated hexadecimal IDs, not ISO filenames.
     return (r'''@echo off
 setlocal EnableExtensions EnableDelayedExpansion
@@ -213,11 +219,11 @@ if not exist "%FBSOURCE%\sources\install.wim" goto detach_failed
 dism /English /Get-WimInfo /WimFile:"%FBSOURCE%\sources\install.wim" >>"%LOG%" 2>&1
 if errorlevel 1 goto detach_failed
 echo PAYLOAD_VALIDATED >>"%LOG%"
-rem Use the installer in the matching WinPE image, as on native installation media.
-rem The ISO-root executable is the launcher used for an existing Windows system.
-if not exist "%SYSTEMDRIVE%\sources\setup.exe" goto detach_failed
+rem Use the selected installation engine; never fall back to a different ISO.
+if not exist "SETUPPATH" goto detach_failed
 echo INSTALL_SOURCE=%FBSOURCE% >>"%LOG%"
-"%SYSTEMDRIVE%\sources\setup.exe" INSTALLARG"%FBSOURCE%\sources\install.wim"
+echo SETUP_ENGINE=SETUPPATH >>"%LOG%"
+"SETUPPATH" INSTALLARG"%FBSOURCE%\sources\install.wim"
 set SETUP_EXIT=%ERRORLEVEL%
 echo SETUP_EXIT=%SETUP_EXIT% >>"%LOG%"
 if not "%SETUP_EXIT%"=="0" goto detach_failed
@@ -231,7 +237,7 @@ if defined LOG type "%LOG%"
 cmd.exe
 :done
 cmd.exe
-''').replace('TOKEN', token).replace('IMAGEID', image_id).replace('INSTALLARG', argument).replace('\n', '\r\n')
+''').replace('TOKEN', token).replace('IMAGEID', image_id).replace('INSTALLARG', argument).replace('SETUPPATH', setup).replace('\n', '\r\n')
 
 
 def state_path(paths) -> Path:
@@ -249,7 +255,7 @@ def load(paths) -> dict | None:
     regular(path, paths.data)
     try:
         state = json.loads(path.read_text())
-        if state['schema_version'] != 1 or not UUID.fullmatch(state['uuid']) or not UUID.fullmatch(state['efi_uuid']) or not DIGEST.fullmatch(state['token']):
+        if state['schema_version'] not in (1, 2) or not UUID.fullmatch(state['uuid']) or not UUID.fullmatch(state['efi_uuid']) or not DIGEST.fullmatch(state['token']):
             raise ValueError('invalid schema or identity')
         for key in ('ntloader_sha256', 'helper_sha256'):
             if not DIGEST.fullmatch(state[key]): raise ValueError('invalid runtime hash')
@@ -272,6 +278,15 @@ def load(paths) -> dict | None:
                 raise ValueError('invalid image identifier or size')
             if type(record['build']) is not int or record['build'] < MIN_WINPE_BUILD:
                 raise ValueError('invalid WinPE build')
+            if 'winpe_source' in record:
+                donor = record['winpe_source']
+                if state['schema_version'] != 2 or not isinstance(donor, dict) or set(donor) != {'filename', 'sha256', 'installer_build'}:
+                    raise ValueError('invalid borrowed WinPE provenance')
+                validate_filename(donor['filename'])
+                if not DIGEST.fullmatch(donor['sha256']) or record['build'] > MAX_DONOR_WINPE_BUILD:
+                    raise ValueError('invalid borrowed WinPE source or build')
+                if type(donor['installer_build']) is not int or not MIN_LEGACY_BUILD <= donor['installer_build'] < MIN_WINPE_BUILD:
+                    raise ValueError('invalid older installer build')
             if record['size'] != record['files']['image.iso']['size']:
                 raise ValueError('image size differs from resource inventory')
             expected = {'image.iso', 'boot.wim', 'initrd.cpio'}
@@ -382,21 +397,36 @@ def verify(paths, *, full_hash: bool = True, check_menu: bool = True) -> list[st
         return [str(exc)]
 
 
-def add(paths, source: Path, runner: Runner, *, replace: bool = False):
+def _identity(path: Path) -> tuple[int, ...]:
+    value = path.stat()
+    return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
+
+
+def add(paths, source: Path, runner: Runner, *, replace: bool = False, winpe_from: Path | None = None):
     state=load(paths)
     if state is None:raise FlexBootError('Windows support was not enabled when this media was created')
     if verify(paths,full_hash=False):raise MediaStateError('Windows media is inconsistent; run verify')
     inspected=source.stat()
-    facts=inspect_source(source,runner)
+    facts=inspect_source(source,runner,borrowed_winpe=True) if winpe_from is not None else inspect_source(source,runner)
+    donor_facts = donor_identity = donor_digest = None
+    if winpe_from is not None:
+        donor_identity = _identity(winpe_from)
+        donor_facts = inspect_source(winpe_from, runner)
+        donor_digest = sha256_file(winpe_from)
+        if _identity(winpe_from) != donor_identity:
+            raise FlexBootError('WinPE source changed during inspection')
     image_id=identifier(source.name)
     previous=next((r for r in state['images'] if r['id']==image_id),None)
     if previous and not replace:
+        if winpe_from is not None and previous.get('winpe_source', {}).get('sha256') != donor_digest:
+            raise FlexBootError('Different WinPE source selected; use --replace')
         if sha256_file(source)==previous['files']['image.iso']['sha256']:
             if verify(paths,full_hash=True):raise MediaStateError('Existing Windows resources are inconsistent')
             return previous,'skipped'
         raise FlexBootError('Different Windows ISO uses the installed name; use --replace')
     root=paths.windows/'windows'
-    required=facts['size'] + 3*facts['entries']['sources/boot.wim'][1]+128*1024**2
+    boot_facts = donor_facts or facts
+    required=facts['size'] + max(3*boot_facts['entries']['sources/boot.wim'][1], facts['entries']['sources/boot.wim'][1])+128*1024**2
     if shutil.disk_usage(root).free<required:raise MediaStateError('Not enough Windows partition space for transactional preparation')
     stage=Path(tempfile.mkdtemp(prefix='.preparing-',dir=root))
     destination=root/image_id;backup=root/('.backup-'+uuid.uuid4().hex)
@@ -408,13 +438,25 @@ def add(paths, source: Path, runner: Runner, *, replace: bool = False):
         if (inspected.st_dev,inspected.st_ino,inspected.st_size,inspected.st_mtime_ns,inspected.st_ctime_ns) != (current.st_dev,current.st_ino,current.st_size,current.st_mtime_ns,current.st_ctime_ns):
             raise FlexBootError('Source ISO changed after inspection')
         # Inspect the immutable copied bytes, not the potentially changing source.
-        copied=inspect_source(stage/'image.iso',runner)
+        copied=inspect_source(stage/'image.iso',runner,borrowed_winpe=True) if winpe_from is not None else inspect_source(stage/'image.iso',runner)
         if copied['entries'] != facts['entries']:raise FlexBootError('Source ISO changed during inspection/copy')
+        installer_build = None
+        if winpe_from is not None:
+            extract(stage/'image.iso', copied['entries']['sources/boot.wim'], stage/'installer.wim')
+            installer_build = wim_info(stage/'installer.wim', runner, minimum_build=MIN_LEGACY_BUILD)
+            (stage/'installer.wim').unlink()
+            if installer_build >= MIN_WINPE_BUILD:
+                raise FlexBootError('This installer has a supported native WinPE; omit --winpe-from')
+            extract(stage/'image.iso', copied['entries']['sources/setup.exe'], stage/'source-setup.exe')
+            pe_x64(stage/'source-setup.exe')
+            (stage/'source-setup.exe').unlink()
         for name,dest in [('sources/boot.wim','boot.wim'),('boot/boot.sdi','boot.sdi'),('efi/boot/bootx64.efi','bootx64.efi')]:
-            extract(stage/'image.iso',copied['entries'][name],stage/dest)
+            extract(winpe_from if winpe_from is not None else stage/'image.iso',boot_facts['entries'][name],stage/dest)
         pe_x64(stage/'bootx64.efi');build=wim_info(stage/'boot.wim',runner)
+        if winpe_from is not None and build > MAX_DONOR_WINPE_BUILD:
+            raise FlexBootError('Borrowed WinPE currently requires a Windows 10-era build (15063–19045)')
         runner.run(['wimlib-imagex', 'dir', stage/'boot.wim', '2', '--path=/sources/setup.exe'])
-        atomic_text(stage/'startup.bat',startup(state['token'],image_id,build))
+        atomic_text(stage/'startup.bat',startup(state['token'],image_id,build,source_setup=True) if winpe_from is not None else startup(state['token'],image_id,build))
         atomic_text(stage/'winpeshl.ini','[LaunchApps]\r\n%SYSTEMROOT%\\System32\\cmd.exe, /c %SYSTEMROOT%\\System32\\startup.bat\r\n')
         commands=''.join(f'add "{path}" /Windows/System32/{name}\n' for path,name in [(stage/'startup.bat','startup.bat'),(stage/'winpeshl.ini','winpeshl.ini'),(paths.grub_dir/'windows/flexboot-win.exe','flexboot-win.exe')])
         # WIM command-language paths are generated owned paths; reject quoting characters.
@@ -428,6 +470,11 @@ def add(paths, source: Path, runner: Runner, *, replace: bool = False):
         files={p.name:{'size':p.stat().st_size,'sha256':sha256_file(p)} for p in stage.iterdir()}
         if files['image.iso']['sha256'] != digest:raise MediaStateError('Staged ISO integrity changed')
         record={'id':image_id,'filename':source.name,'size':facts['size'],'build':build,'files':files}
+        if winpe_from is not None:
+            if _identity(winpe_from) != donor_identity:
+                raise FlexBootError('WinPE source changed during preparation')
+            record['winpe_source'] = {'filename': winpe_from.name, 'sha256': donor_digest, 'installer_build': installer_build}
+            state['schema_version'] = 2
         if previous:os.replace(destination,backup)
         os.replace(stage,destination);installed=True
         state['images']=[r for r in state['images'] if r['id']!=image_id]+[record]

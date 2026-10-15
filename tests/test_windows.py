@@ -153,11 +153,34 @@ class WindowsTests(unittest.TestCase):
 
     def test_renamed_zip_rejected(self):
         iso=Path(self.temp.name)/'example.iso';iso.write_bytes(b'0'*1024)
-        with patch.object(Runner,'run',return_value=subprocess.CompletedProcess([],0,'Type = zip\n----------','')):
-            with self.assertRaisesRegex(FlexBootError,'renamed archives'):windows.inspect_source(iso)
+        for kind in ('zip', 'MBR', 'FAT'):
+            for borrowed in (False, True):
+                with self.subTest(kind=kind,borrowed=borrowed), patch.object(Runner,'run',return_value=subprocess.CompletedProcess([],0,f'Type = {kind}\n----------','')):
+                    with self.assertRaisesRegex(FlexBootError,'renamed archives'):windows.inspect_source(iso,borrowed_winpe=borrowed)
+
+    def test_older_iso_can_omit_usb_efi_fallback_only_with_donor(self):
+        iso=Path(self.temp.name)/'old.iso';iso.write_bytes(b'0'*4096)
+        listing='Type = Iso\n----------\n'+'\n\n'.join(f'Path = {p}\nSize = 1' for p in ('setup.exe','sources/setup.exe','sources/boot.wim','sources/install.wim'))
+        with patch.object(Runner,'run',return_value=subprocess.CompletedProcess([],0,listing,'')):
+            with self.assertRaises(FlexBootError):windows.inspect_source(iso)
+            self.assertIn('sources/setup.exe',windows.inspect_source(iso,borrowed_winpe=True)['entries'])
+
+    def test_borrowed_cli_dry_run_does_not_prepare_wim_or_target(self):
+        from contextlib import redirect_stdout
+        from io import StringIO
+        from flexboot.cli import main
+        source=Path(self.temp.name)/'old.iso';source.write_bytes(b'old')
+        donor=Path(self.temp.name)/'donor.iso';donor.write_bytes(b'donor')
+        before=set(Path(self.temp.name).iterdir());output=StringIO()
+        with patch.object(windows,'inspect_source',return_value={}) as inspect, patch.object(windows,'wim_info',side_effect=AssertionError('dry run extracted WIM')), redirect_stdout(output):
+            self.assertEqual(main(['windows','add','/dev/missing',str(source),'--winpe-from',str(donor),'--dry-run','--json']),0)
+        self.assertFalse(json.loads(output.getvalue())['persistent_changes'])
+        self.assertFalse(json.loads(output.getvalue())['winpe_build_checked'])
+        self.assertEqual(inspect.call_args_list[-1].kwargs,{'borrowed_winpe':True})
+        self.assertEqual(set(Path(self.temp.name).iterdir()),before)
 
     def test_manifest_uuid_and_identifier_and_types(self):
-        for field,value in [('uuid','FEDCBA9876543210'),('token','../outside'),('images',None),('helper_sha256','z'*64),('schema_version',2)]:
+        for field,value in [('uuid','FEDCBA9876543210'),('token','../outside'),('images',None),('helper_sha256','z'*64),('schema_version',3)]:
             state=copy.deepcopy(self.state);state[field]=value
             windows.state_path(self.paths).write_text(json.dumps(state))
             with self.subTest(field=field),self.assertRaises(MediaStateError):windows.load(self.paths)
@@ -198,6 +221,32 @@ class WindowsTests(unittest.TestCase):
                 windows.wim_info(Path('fixture.wim'), Info(build))
         with self.assertRaisesRegex(FlexBootError, 'x86-64'):
             windows.wim_info(Path('fixture.wim'), Info(9600, '0'))
+        self.assertEqual(windows.wim_info(Path('fixture.wim'), Info(9600), minimum_build=windows.MIN_LEGACY_BUILD), 9600)
+        for build in (7600,7601):
+            with self.subTest(build=build), self.assertRaises(FlexBootError):
+                windows.wim_info(Path('fixture.wim'), Info(build), minimum_build=windows.MIN_LEGACY_BUILD)
+
+    def test_borrowed_startup_never_uses_donor_setup(self):
+        script = windows.startup(self.token, 'b'*64, 17134, source_setup=True)
+        self.assertIn('"%FBSOURCE%\\sources\\setup.exe" /InstallFrom:', script)
+        self.assertNotIn('%SYSTEMDRIVE%\\sources\\setup.exe', script)
+        self.assertIn('if not "%MATCHES%"=="1" goto failed', script)
+
+    def test_borrowed_provenance_is_validated(self):
+        self.prepare_fake_record()
+        record = self.state['images'][0]
+        record['build'] = 17134
+        record['winpe_source'] = {'filename': 'donor.iso', 'sha256': 'd'*64, 'installer_build': 9600}
+        windows.state_path(self.paths).write_text(json.dumps(self.state))
+        with self.assertRaises(MediaStateError): windows.load(self.paths)
+        self.state['schema_version'] = 2
+        windows.state_path(self.paths).write_text(json.dumps(self.state))
+        self.assertEqual(windows.verify(self.paths), [])
+        for key, value in [('sha256','invalid'), ('installer_build',19041), ('installer_build',7601), ('filename','../outside')]:
+            changed = copy.deepcopy(self.state)
+            changed['images'][0]['winpe_source'][key] = value
+            windows.state_path(self.paths).write_text(json.dumps(changed))
+            with self.subTest(key=key), self.assertRaises(FlexBootError): windows.load(self.paths)
 
     def test_startup_rejects_untrusted_values(self):
         with self.assertRaises(SafetyError):windows.startup('bad', 'b'*64,26100)
@@ -313,14 +362,45 @@ class WindowsTests(unittest.TestCase):
         (self.paths.grub_dir/'windows.cfg').write_text('bad menu')
         self.assertTrue(any('stale' in p for p in windows.verify(self.paths)))
 
-    def fake_add(self, source, *, runner=None, replace=False):
+    def fake_add(self, source, *, runner=None, replace=False, winpe_from=None, donor_build=17134):
         entries={p:(p,512 if p.endswith('.efi') else 1) for p in windows.REQUIRED}
+        entries['sources/setup.exe'] = ('sources/setup.exe', 512)
         def extract(_source,entry,destination):
-            if entry[0].endswith('.efi'):pe(destination)
+            if entry[0].endswith(('.efi', '.exe')):pe(destination)
             else:destination.write_bytes(b'a')
         facts={'entries':entries,'size':source.stat().st_size}
-        with patch.object(windows,'inspect_source',return_value=facts), patch.object(windows,'extract',side_effect=extract), patch.object(windows,'wim_info',return_value=26100):
-            return windows.add(self.paths,source,runner or FakeRunner(),replace=replace)
+        def info(path, _runner, **kwargs):
+            return 9600 if path.name == 'installer.wim' else (donor_build if winpe_from else 26100)
+        with patch.object(windows,'inspect_source',return_value=facts), patch.object(windows,'extract',side_effect=extract), patch.object(windows,'wim_info',side_effect=info):
+            return windows.add(self.paths,source,runner or FakeRunner(),replace=replace,winpe_from=winpe_from)
+
+    def test_borrowed_preparation_integrity_and_replacement(self):
+        source=Path(self.temp.name)/'old.iso';source.write_bytes(b'old installer')
+        donor=Path(self.temp.name)/'donor.iso';donor.write_bytes(b'PE source')
+        record,status=self.fake_add(source,winpe_from=donor)
+        self.assertEqual(status,'added')
+        self.assertEqual(record['winpe_source']['sha256'],windows.sha256_file(donor))
+        self.assertEqual(windows.load(self.paths)['schema_version'],2)
+        self.assertEqual(windows.verify(self.paths),[])
+        self.assertEqual(self.fake_add(source,winpe_from=donor)[1],'skipped')
+        donor.write_bytes(b'changed donor')
+        with self.assertRaisesRegex(FlexBootError,'Different WinPE'):
+            self.fake_add(source,winpe_from=donor)
+        before=windows.state_path(self.paths).read_bytes()
+        with self.assertRaisesRegex(FlexBootError,'Windows 10-era'):
+            self.fake_add(source,winpe_from=donor,replace=True,donor_build=26100)
+        self.assertEqual(windows.state_path(self.paths).read_bytes(),before)
+        self.assertEqual(windows.verify(self.paths),[])
+
+    def test_borrowed_source_change_rolls_back(self):
+        source=Path(self.temp.name)/'old.iso';source.write_bytes(b'old installer')
+        donor=Path(self.temp.name)/'donor.iso';donor.write_bytes(b'PE source')
+        identity=windows._identity(donor)
+        with patch.object(windows,'_identity',side_effect=[identity,identity,(*identity[:-1],identity[-1]+1)]):
+            with self.assertRaisesRegex(FlexBootError,'changed during preparation'):
+                self.fake_add(source,winpe_from=donor)
+        self.assertEqual(windows.verify(self.paths),[])
+        self.assertEqual(list((self.paths.windows/'windows').iterdir()),[])
 
     def test_add_skip_replace_and_full_verify(self):
         source=Path(self.temp.name)/'space and quote\' image.iso';source.write_bytes(b'0'*4096)

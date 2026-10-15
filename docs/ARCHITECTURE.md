@@ -61,6 +61,13 @@ with an explicit installation WIM. Destination selection remains in Microsoft's
 UI. Add/replace/remove use staged resources and rollback; full verification checks
 recorded files, hashes, runtime, marker and generated menu.
 
+An explicit `windows add --winpe-from` can prepare an older x64 installer using
+Windows 10 WinPE resources. The selected older ISO supplies its own Setup and
+installation WIM; the donor supplies only the temporary boot environment.
+Windows metadata schema 2 records donor provenance and installer build. Donor
+identity is checked around preparation, and changes require explicit replacement.
+Windows 7 remains gated out pending firmware and installation validation.
+
 ## Menu presentation settings
 
 `menu.py` owns schema-1 `.flexboot/menu.json`, with OS-qualified entry IDs,

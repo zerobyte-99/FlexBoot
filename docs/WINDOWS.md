@@ -122,6 +122,49 @@ reboot, boot the destination's Windows Boot Manager; continuing to boot the USB
 returns to the FlexBoot menu. Startup diagnostics are in
 `X:\Windows\Temp\flexboot.log` and Microsoft's `X:\Windows\Panther` logs.
 
+## Older installers with a newer WinPE (experimental)
+
+The optional `--winpe-from` argument supplies the temporary boot environment
+from a local Windows 10 ISO while retaining the older installer ISO intact:
+
+```bash
+sudo flexboot windows add ./out/windows.img server2012r2.iso \
+  --winpe-from windows10.iso --dry-run
+sudo flexboot windows add ./out/windows.img server2012r2.iso \
+  --winpe-from windows10.iso
+```
+
+The donor must provide x64 Setup WinPE at WIM index 2, build 15063–19045.
+The older source must provide an x64 index-2 boot image, build 9200–15062, and a native
+`sources/setup.exe`, together with `sources/install.wim`. Disk images renamed
+as `.iso` remain rejected. The source ISO may omit the USB EFI fallback file
+because boot resources come from the donor.
+
+Preparation checks the older Setup executable's architecture, records the donor
+filename and SHA-256 plus the older installer build, and hashes the prepared
+resources. The complete donor ISO is not stored on the USB. It is needed only
+during preparation; the older ISO and its prepared boot resources suffice at boot.
+
+The borrowed WinPE initializes storage and mounts the selected older ISO. It
+launches that ISO's own `sources/setup.exe` with its explicit installation WIM.
+There is no automatic fallback to the donor's installer or another ISO.
+Destination selection remains in Microsoft's Setup UI.
+
+Changing the donor for an existing image requires `--replace`. A failed
+replacement retains the installed resources and menu. Dry-run checks source
+layouts only; it does not extract WIMs, validate their builds, or check Setup
+compatibility. Actual preparation performs those checks.
+
+Using this mode upgrades Windows metadata to schema 2. FlexBoot 0.7.2 and older
+cannot manage that media; use the updated application for subsequent operations.
+No partition-layout migration is performed.
+
+See [older Windows experiments](TESTING-0.7.3.md) for measured installation and
+boot results. Eligibility alone does not establish support for every release.
+Windows 7 remains rejected. Its installed systems additionally need compatible
+firmware with CSM and suitable drivers; a newer WinPE does not supply those
+capabilities to the installed OS.
+
 ## Validation and limits
 
 See [extended loader experiments](WINDOWS-EXPERIMENTS.md) for measured results.
@@ -137,8 +180,10 @@ Current accepted sources are ISO9660/UDF installers with an x64 Setup boot image
 at WIM index 2, WinPE build >=15063 (Windows 10 version 1703), and
 `sources/install.wim`. This minimum follows Microsoft's requirement for
 [multiple partitions on removable USB media](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe--use-a-single-usb-key-for-winpe-and-a-wim-file---wim?view=windows-11).
-Windows 8.1 PE exposes only the first boot partition in this layout, so it cannot
-find the NTFS source. Windows 7/8/8.1, Server 2016 and earlier PE remain excluded.
+Older native WinPE exposes only the first boot partition in this layout, so it
+cannot find the NTFS source. The default path excludes Windows 7/8/8.1 and Server
+2016 or earlier PE. The explicit borrowed-WinPE mode above is a separate
+experimental path; consult its test matrix before use.
 ESD, split WIM, ARM64, BIOS, Secure Boot, arbitrary custom WinPE, and all firmware
 variants are not claimed as supported. Boot WIM size is limited to
 2 GiB. Detection by contents is an eligibility check, not a guarantee that every
