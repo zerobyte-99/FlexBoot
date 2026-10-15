@@ -6,6 +6,9 @@ FlexBoot matches filesystem structure, volume metadata, and bounded boot configu
 
 - **Ubuntu/casper:** `/casper/vmlinuz` or `vmlinuz.efi`, a known casper initrd (including `.img` and `.xz`), and `filesystem.squashfs`. A single `*.live.squashfs` leaf with every dotted parent layer also matches and receives `layerfs-path=`. Manifest/size files alone do not qualify. Ubuntu Server keeps its inspected `iso-scan/filename=` and `---` form.
 - **Debian Live / Kali Live:** a matching `/live/vmlinuz[SUFFIX]` and `/live/initrd.img[SUFFIX]` or `initrd[SUFFIX]`, plus `/live/filesystem.squashfs`, booted with live-boot `findiso=`. A canonical unversioned pair takes priority; otherwise multiple complete versioned pairs are rejected.
+- **GParted Live:** the root or `/live/` GParted version marker plus a complete Debian Live layout. Uses its explicit `username=user` and vendor live arguments; generic Debian defaults can break desktop autologin.
+- **Parrot Live:** a Parrot volume label, the vendor `hostname=parrot` boot marker, and complete Debian Live resources. Uses `findiso=`, `noautomount`, and `noeject` without persistence.
+- **Slax Live:** the Slax volume label, corroborating syslinux configuration, kernel/initrfs, and core module. Linux Live Kit uses `from=` to mount the intact ISO; persistence and automount are not requested.
 - **SystemRescue:** its `/sysresccd/boot/x86_64` kernel resources and `/boot/grub/loopback.cfg`. FlexBoot delegates to the vendor loopback menu and removes GRUB's TPM module as documented by SystemRescue.
 - **Arch Linux archiso:** `/arch/x86_64/airootfs.sfs`, an archiso kernel, and `/boot/grub/loopback.cfg`. FlexBoot delegates to the ISO's loopback menu.
 - **Rescuezilla:** a casper live layout plus the Rescuezilla volume or boot-config marker. Its boot plan includes the vendor-documented `toram` behavior.

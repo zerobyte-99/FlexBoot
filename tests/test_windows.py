@@ -182,6 +182,23 @@ class WindowsTests(unittest.TestCase):
         (self.paths.windows/'windows/.preparing-interrupted').mkdir()
         self.assertTrue(any('interrupted' in p for p in windows.verify(self.paths)))
 
+    def test_supported_winpe_builds_and_legacy_boundary(self):
+        class Info(FakeRunner):
+            def __init__(self, build, arch='9'):
+                super().__init__(); self.build=build; self.arch=arch
+            def run(self, argv, **kwargs):
+                output = next(str(value).split('=',1)[1] for value in argv if str(value).startswith('--extract-xml='))
+                Path(output).write_text(f'<WIM><IMAGE INDEX="2"><WINDOWS><ARCH>{self.arch}</ARCH><VERSION><BUILD>{self.build}</BUILD></VERSION></WINDOWS></IMAGE></WIM>')
+                return subprocess.CompletedProcess(argv,0,'','')
+        for build in (15063,17134,17763,19041,20348,26100):
+            with self.subTest(build=build):
+                self.assertEqual(windows.wim_info(Path('fixture.wim'), Info(build)), build)
+        for build in (7601,9200,9600,14393):
+            with self.subTest(build=build), self.assertRaisesRegex(FlexBootError,'multi-partition'):
+                windows.wim_info(Path('fixture.wim'), Info(build))
+        with self.assertRaisesRegex(FlexBootError, 'x86-64'):
+            windows.wim_info(Path('fixture.wim'), Info(9600, '0'))
+
     def test_startup_rejects_untrusted_values(self):
         with self.assertRaises(SafetyError):windows.startup('bad', 'b'*64,26100)
         script=windows.startup(self.token,'b'*64,19041)

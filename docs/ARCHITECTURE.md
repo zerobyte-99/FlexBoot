@@ -37,7 +37,8 @@ No function builds a shell command. Every external command receives an argv list
 ## Optional Windows backend
 
 `windows.py` inspects ISO9660/UDF resources with 7z, validates x64 boot-index-2
-WinPE metadata and native Setup, prepares a WIM with wimlib, and writes a small
+WinPE metadata (minimum build 15063 for removable multi-partition access) and
+native Setup, prepares a WIM with wimlib, and writes a small
 deterministic boot archive. Intact Windows ISOs remain on a separately reserved
 NTFS partition. `windows.json` in ext4 metadata records filesystem identities,
 boot partition role, runtime hashes, and per-image resource inventories.

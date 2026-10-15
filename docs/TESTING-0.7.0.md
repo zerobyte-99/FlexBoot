@@ -70,3 +70,10 @@ All guests and temporary mounts were stopped or cleaned up after testing.
 
 Earlier [Windows 10/11 installation results](WINDOWS-EXPERIMENTS.md) remain
 separate from this USB-backed test.
+
+## Follow-up hardware observation
+
+On 2026-10-15, the user reported successfully booting a physical machine to all
+eight images on this USB. This is user-reported native hardware validation of
+that drive and machine, separate from the automated QEMU/OVMF results above.
+It does not establish Secure Boot or universal firmware compatibility.

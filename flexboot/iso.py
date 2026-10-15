@@ -17,6 +17,7 @@ TEXT_CANDIDATES = {
     "/boot/grub/loopback.cfg", "/EFI/BOOT/grub.cfg", "/isolinux/isolinux.cfg",
     "/Clonezilla-Live-Version", "/.disk/info",
     "/conf/bootid.txt",
+    "/slax/boot/syslinux.cfg",
 }
 
 

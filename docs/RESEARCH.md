@@ -131,3 +131,12 @@ Full Windows 10/11 installation and independent first-run boot were verified on
 disposable virtual targets with the Basic Data source layout. The detailed
 [experiment record](WINDOWS-EXPERIMENTS.md) distinguishes full installs, diagnostic
 workarounds, provisioning fixtures, failure cases, and remaining hardware limits.
+
+## Compatibility expansion, 2026-10-15
+
+- [Microsoft AttachVirtualDisk](https://learn.microsoft.com/en-us/windows/win32/api/virtdisk/nf-virtdisk-attachvirtualdisk): ISO attachment is supported from Windows 8 / Server 2012. This rules out the same native attachment mechanism for Windows 7 and XP. WinPE components still require actual boot validation; API availability alone does not establish installer compatibility.
+- [Slax author: from= ISO support](https://www.slax.org/blog/19491-Using-from-slax.iso.html): Linux Live Kit supports rediscovering and mounting an intact ISO through from=. The supplied Slax 12.2 initramfs was also inspected read-only: its find_data_try accepts an ISO pathname and mounts it read-only, and persistence is entered only when requested with perch parameters. The generated profile requests no persistence or automount mode.
+- [Microsoft Setup command-line options](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-command-line-options): keep native Setup responsible for destination selection and use its explicit InstallFrom image selection.
+
+- Vendor boot configurations read directly from the supplied GParted Live 1.8.1-3 and Parrot Security 7.2 ISOs establish the product-specific live arguments. GParted needs `username=user`; Parrot specifies `hostname=parrot`, `noautomount`, and `noeject`. Arguments are fixed in independently written profiles; no vendor scripts are imported or executed on the host.
+- [Microsoft: multi-partition USB media in WinPE](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe--use-a-single-usb-key-for-winpe-and-a-wim-file---wim?view=windows-11): WinPE and technician Windows must be version 1703 or later to work with multiple USB partitions. A Windows 8.1 boot experiment confirmed that only the first FAT32 source volume was exposed; the NTFS source partition was absent and startup refused before Setup. Native ISO API availability by itself is insufficient for this layout.

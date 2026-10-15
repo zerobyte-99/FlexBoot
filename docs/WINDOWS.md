@@ -128,12 +128,18 @@ See [extended loader experiments](WINDOWS-EXPERIMENTS.md) for measured results.
 Validation includes real Windows 10/11 WinPE, exact ISO mounting, multiple Windows
 entries, Windows installation on disposable virtual disks, Linux userspace on
 Windows-enabled media, dependency and integrity failures, transactional rollback,
-and rejection of duplicate source markers. Physical USB compatibility remains
-unverified.
+and rejection of duplicate source markers. The user also reported a native
+hardware boot of the supplied Windows 10 image; this was not a full hardware
+installation test. See the [compatibility expansion](TESTING-0.7.2.md) for the
+additional client and Server tests.
 
 Current accepted sources are ISO9660/UDF installers with an x64 Setup boot image
-at WIM index 2, WinPE build >=19041, and `sources/install.wim`. ESD, split WIM,
-ARM64, BIOS, Secure Boot, Windows Server, older PE, arbitrary custom WinPE, and
-all firmware variants are not claimed as supported. Boot WIM size is limited to
+at WIM index 2, WinPE build >=15063 (Windows 10 version 1703), and
+`sources/install.wim`. This minimum follows Microsoft's requirement for
+[multiple partitions on removable USB media](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/winpe--use-a-single-usb-key-for-winpe-and-a-wim-file---wim?view=windows-11).
+Windows 8.1 PE exposes only the first boot partition in this layout, so it cannot
+find the NTFS source. Windows 7/8/8.1, Server 2016 and earlier PE remain excluded.
+ESD, split WIM, ARM64, BIOS, Secure Boot, arbitrary custom WinPE, and all firmware
+variants are not claimed as supported. Boot WIM size is limited to
 2 GiB. Detection by contents is an eligibility check, not a guarantee that every
 new Windows release will install on every machine.

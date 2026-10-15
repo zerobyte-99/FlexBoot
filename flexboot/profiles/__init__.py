@@ -10,10 +10,23 @@ from .systemrescue import SystemRescueProfile
 from .ubuntu_casper import UbuntuCasperProfile
 from .gentoo_live import GentooLiveProfile
 from .grml import GrmlLiveProfile
+from .slax import SlaxProfile
+from .gparted import GPartedLiveProfile
+from .parrot import ParrotLiveProfile
 
 PROFILES = (
-    GrmlLiveProfile(), GentooLiveProfile(), SystemRescueProfile(), ArchisoProfile(), RescuezillaProfile(), ClonezillaProfile(),
-    FedoraLiveProfile(), UbuntuCasperProfile(), DebianLiveProfile(),
+    ParrotLiveProfile(),
+    GPartedLiveProfile(),
+    SlaxProfile(),
+    GrmlLiveProfile(),
+    GentooLiveProfile(),
+    SystemRescueProfile(),
+    ArchisoProfile(),
+    RescuezillaProfile(),
+    ClonezillaProfile(),
+    FedoraLiveProfile(),
+    UbuntuCasperProfile(),
+    DebianLiveProfile(),
 )
 
 

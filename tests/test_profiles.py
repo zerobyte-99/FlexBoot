@@ -21,8 +21,28 @@ class ProfileTests(unittest.TestCase):
     def test_installer_like_layout_is_not_claimed(self):
         self.assertIsNone(detect_profile({"/install.amd/vmlinuz", "/install.amd/initrd.gz"}))
 
+    def test_gparted_uses_vendor_live_user(self):
+        paths = {"/GParted-Live-Version", "/live/vmlinuz", "/live/initrd.img", "/live/filesystem.squashfs"}
+        match = detect_profile(paths)
+        self.assertEqual(match.profile, "gparted-live")
+        self.assertIn("username=user", match.boot_args)
+        self.assertIn("findiso=${iso_path}", match.boot_args)
+        for missing in ("/live/vmlinuz", "/live/initrd.img", "/live/filesystem.squashfs"):
+            with self.subTest(missing=missing):
+                self.assertIsNone(detect_profile(paths - {missing}))
+
     def test_missing_live_root_is_not_supported(self):
         self.assertIsNone(detect_profile({"/live/vmlinuz", "/live/initrd.img"}))
+
+    def test_parrot_preserves_vendor_noautomount(self):
+        facts = ISOInspection(frozenset({"/live/vmlinuz", "/live/initrd.img", "/live/filesystem.squashfs"}),
+                              "Parrot security 7.2", {"/boot/grub/grub.cfg": "linux /live/vmlinuz boot=live hostname=parrot components noautomount"})
+        match = detect_profile(facts)
+        self.assertEqual(match.profile, "parrot-live")
+        self.assertIn("noautomount", match.boot_args)
+        self.assertNotIn("persistence", match.boot_args)
+        without_marker = ISOInspection(facts.paths, "unrelated", facts.text_files)
+        self.assertEqual(detect_profile(without_marker).profile, "debian-live")
 
     def test_systemrescue_uses_vendor_loopback_config(self):
         match = detect_profile({

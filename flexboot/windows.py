@@ -23,6 +23,9 @@ from .process import Runner
 DIGEST = re.compile(r"[0-9a-f]{64}")
 UUID = re.compile(r"[0-9a-fA-F-]{8,64}")
 REQUIRED = ('efi/boot/bootx64.efi', 'boot/boot.sdi', 'sources/boot.wim', 'sources/install.wim', 'setup.exe')
+# ISO attachment exists on Windows 8, but removable multi-partition USB access
+# requires WinPE 10 version 1703. Older PE exposes only the boot partition.
+MIN_WINPE_BUILD = 15063
 
 
 def identifier(filename: str) -> str:
@@ -147,8 +150,8 @@ def wim_info(path: Path, runner: Runner) -> int:
         if image.findtext('WINDOWS/ARCH') != '9':
             raise ValueError('boot index 2 must be x86-64')
         build = int(image.findtext('WINDOWS/VERSION/BUILD', '0'))
-        if build < 19041:
-            raise ValueError('only Windows 10 22H2-class and newer PE have been tested')
+        if build < MIN_WINPE_BUILD:
+            raise ValueError(f'WinPE build must be >= {MIN_WINPE_BUILD} (Windows 10 version 1703) for multi-partition removable USB support')
         return build
     except (ET.ParseError, ValueError, StopIteration) as exc:
         raise FlexBootError(f'Unsupported WinPE WIM metadata: {exc}') from exc
@@ -267,7 +270,7 @@ def load(paths) -> dict | None:
         for record in records:
             if record['id'] != identifier(record['filename']) or type(record['size']) is not int or record['size'] <= 0:
                 raise ValueError('invalid image identifier or size')
-            if type(record['build']) is not int or record['build'] < 19041:
+            if type(record['build']) is not int or record['build'] < MIN_WINPE_BUILD:
                 raise ValueError('invalid WinPE build')
             if record['size'] != record['files']['image.iso']['size']:
                 raise ValueError('image size differs from resource inventory')

@@ -60,17 +60,21 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 |---|---|---|
 | Ubuntu desktop/live | Casper kernel, initrd, and live filesystem; complete layered roots also recognized | Profile tests; layered desktop hardware pending |
 | Ubuntu Server | Current casper server layout and server loopback arguments | Real ISO and hardware boot; 26.04.1 QEMU installer |
-| Debian Live / Kali Live | Debian live filesystem; `findiso=` | Kali 2019.3, 2022.2, and 2026.2 QEMU desktops |
+| Debian Live / Kali Live | Debian live filesystem; `findiso=` | Kali 2019.3, 2022.2, and 2026.2 QEMU desktops; hardware boots reported |
+| GParted Live | Product marker, Debian Live resources, explicit live user | 1.8.1-3 QEMU desktop and GParted application |
+| Parrot Live | Product volume and boot marker; live-boot with noautomount | 7.2 QEMU live desktop |
+| Slax Live | Linux Live Kit resources and config; `from=` | 12.2 QEMU desktop, including filename with spaces |
 | SystemRescue | Product layout and vendor `loopback.cfg` | Profile tests; hardware pending |
 | Arch Linux | Archiso layout and vendor `loopback.cfg` | Profile tests; hardware pending |
-| Rescuezilla | Product marker plus casper resources | Rescuezilla 2.6.2 QEMU desktop; hardware pending |
-| Clonezilla Live | Product marker plus Debian Live resources | Clonezilla 3.3.3-37 QEMU live UI; hardware pending |
-| Fedora Live | LiveOS, volume label, and dracut loader resources | Fedora 44 QEMU GNOME desktop; hardware pending |
+| Rescuezilla | Product marker plus casper resources | Rescuezilla 2.6.2 QEMU desktop; hardware boot reported |
+| Clonezilla Live | Product marker plus Debian Live resources | Clonezilla 3.3.3-37 QEMU live UI; hardware boot reported |
+| Fedora Live | LiveOS, volume label, and dracut loader resources | Fedora 44 QEMU GNOME desktop; hardware boot reported |
 | Grml amd64 | Matching flavour resources and boot ID; live-boot `findiso=` | Grml small 2026.09 QEMU login; hardware pending |
 | Gentoo amd64 Live | Current dracut layout and matching live-root label | Minimal 20260913 QEMU login; hardware pending |
-| Windows x64 WIM installers, opt-in | Prepared WinPE, local NTloader, native read-only ISO API | Windows 10/11 full installations and independent QEMU boots; USB hardware pending |
+| Windows 10/11 x64 WIM installers, opt-in | Prepared WinPE, local NTloader, native read-only ISO API | 10/11 full installations and independent QEMU boots; 1803 Setup/disk detection; supplied Windows 10 hardware boot reported |
+| Windows Server x64 WIM installers, opt-in | Same optional Windows backend | Server 2019 full installation and independent first-run boot; Server 2022 Setup/disk detection |
 
-See the [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
+See the [compatibility expansion results](docs/TESTING-0.7.2.md) and [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
 
 FlexBoot rejects incomplete and unknown layouts instead of producing speculative menu entries. Installer-only Kali images and Fedora network installers do not match the live profiles.
 
@@ -357,7 +361,8 @@ The FAT32 partition contains only the removable UEFI loader and presentation fil
 Windows support requires a newly created, explicitly selected layout: FAT32 boot
 storage tagged as GPT Basic Data, ext4 Linux storage, and a reserved NTFS Windows
 partition. Firmware must support booting FAT without the ESP GUID; this works in
-OVMF and still needs USB hardware validation. The default Linux layout uses an ESP.
+OVMF, and the user confirmed a native boot on the existing USB. Other firmware
+may differ. The default Linux layout uses an ESP.
 
 Supply an audited local NTloader, its expected SHA-256, and FlexBoot's locally
 built helper. Nothing is downloaded by these commands:
@@ -384,9 +389,9 @@ ESD, ARM64, BIOS, Secure Boot, and arbitrary Windows images are not supported.
 See the [Windows guide](docs/WINDOWS.md) for dependencies, physical creation,
 replacement/removal, diagnostics, and measured [test results](docs/WINDOWS-EXPERIMENTS.md).
 
-![Actual shared GRUB menu with Grml, Windows 10, and Windows 11](docs/images/linux-windows-menu.png)
+![Actual shared GRUB menu with GParted, Parrot, Slax, Windows Server, and Windows 10](docs/images/compat-menu.png)
 
-Actual 1280×800 QEMU/OVMF capture from the media used for the Windows installation tests.
+Actual 1280×800 QEMU/OVMF capture from the combined [compatibility test media](docs/TESTING-0.7.2.md).
 
 ## Customize boot menu names and order
 
@@ -486,7 +491,7 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 - Secure Boot unsupported
 - Legacy BIOS unsupported
 - ARM64 unsupported
-- Windows requires the explicit Basic Data boot layout, a local runtime, and compatible firmware; physical USB validation pending
+- Windows requires the explicit Basic Data boot layout, a local runtime, and firmware that boots FAT without an ESP
 - Persistence overlays unsupported
 - Encrypted ISO storage unsupported
 - Custom profile definitions unsupported
