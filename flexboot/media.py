@@ -193,7 +193,9 @@ def render_theme(layout: str) -> str:
     template = (Path(__file__).with_name("assets") / filename).read_text(encoding="utf-8")
     if Path(BRAND.credit_asset).name != BRAND.credit_asset:
         raise FlexBootError(f"Invalid branding credit asset name: {BRAND.credit_asset}")
-    return template.replace("@CREDIT_ASSET@", BRAND.credit_asset)
+    return (template.replace("@CREDIT_ASSET@", BRAND.credit_asset)
+            .replace("@CREDIT_LEFT_OFFSET@", str(int(BRAND.credit_canvas_width) + 120 + 12))
+            .replace("@FOOTER_FONT@", BRAND.credit_font))
 
 
 def deploy_theme(efi: Path, background: Path | None = None, layout: str = "flexboot") -> None:

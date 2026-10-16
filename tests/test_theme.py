@@ -55,7 +55,7 @@ class ThemeTests(unittest.TestCase):
         rendered = render_theme("flexboot")
         self.assertNotIn("SELECT BOOT TARGET", rendered)
         self.assertIn("top = 20%", rendered)
-        self.assertIn("left = 96%-620", rendered)
+        self.assertIn("left = 96%-412", rendered)
         self.assertIn("left = 96%-120", rendered)
         self.assertIn("width = 120", rendered)
         self.assertIn('file = "credit.png"', rendered)
@@ -64,7 +64,7 @@ class ThemeTests(unittest.TestCase):
         self.assertNotIn("width =", image_block)
         self.assertNotIn("height =", image_block)
         asset = Path("flexboot/assets/credit.png").read_bytes()
-        self.assertEqual(struct.unpack(">II", asset[16:24]), (460, 16))
+        self.assertEqual(struct.unpack(">II", asset[16:24]), (280, 16))
 
     def test_custom_png_is_copied_to_media(self):
         with tempfile.TemporaryDirectory() as raw:

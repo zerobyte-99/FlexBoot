@@ -66,6 +66,12 @@ support a local QEMU executable and ROM directory. Use `--wait 30` on slower hos
 The output must be a new file. Inspect it visually before replacing the README
 image at `docs/images/boot-menu.png`.
 
+The current README image (0.7.5) was captured from the existing nine-image USB
+under QEMU using a read-only physical backing device and a private writable
+overlay. Its physical write-sector counter stayed unchanged during capture.
+It shows the deployed branding and menu; it does not establish a new native
+hardware boot result.
+
 ## Real ISO boot tests without root
 
 Supply an ISO you have obtained and checked against its publisher's checksum:

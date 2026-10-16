@@ -114,11 +114,13 @@ shipped copies after changing those values:
 python3 tools/generate_credit_asset.py
 ```
 
-The generator draws the original wide, rounded `FlexArc` geometric lettering
-directly through libcairo and does not require or download a font. Sync installs
-the credit asset and selected background while preserving the per-drive layout
-and background selection. In the normal layout, the 460×16 native-size credit
-ends exactly 40 pixels before the fixed-width UEFI text area.
+The generator uses the bitmap glyphs in the host's
+`/usr/share/grub/unicode.pf2` (or `--font PATH`). The credit and adjacent UEFI
+label use GNU Unifont Regular 16 at the same native size and baseline. No font
+is downloaded. The credit reads `FlexBoot by zerobyte • GPT-6.1-Sol`, retaining
+the blue gradient. Sync installs the asset while preserving the per-drive layout
+and background selection. The 280×16 credit canvas ends 12 pixels before the
+fixed-width UEFI text area.
 
 ## Menu density
 

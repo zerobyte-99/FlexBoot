@@ -10,7 +10,7 @@
   Create polished, auditable GRUB multiboot USB drives from ordinary Linux ISO files.
 </p>
 
-![FlexBoot GRUB boot menu showing ISO choices, firmware settings, reboot, and shutdown](docs/images/boot-menu.png)
+![Actual FlexBoot USB menu with Linux and Windows entries and the zerobyte / GPT-6.1-Sol credit](docs/images/boot-menu.png)
 
 Actual GRUB screen captured in QEMU/OVMF at 1920×1080, with example ISO entries.
 
