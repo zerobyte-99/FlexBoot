@@ -180,6 +180,7 @@ def parser() -> argparse.ArgumentParser:
     winadd.add_argument("--replace", action="store_true")
     winadd.add_argument("--continue-on-error", action="store_true")
     winadd.add_argument("--winpe-from", type=Path, help="experimental: boot an older x64 installer using WinPE from a local Windows 10 ISO")
+    winadd.add_argument("--allow-windows7-csm", action="store_true", help="experimental Windows 7 x64; requires --winpe-from, UEFI with CSM enabled, and Secure Boot off")
     _add_output_options(winadd, dry_run=True)
     winremove = windows_commands.add_parser("remove", help="remove an installed Windows ISO and its prepared resources")
     winremove.add_argument("target", type=Path)
@@ -351,6 +352,8 @@ def _read_command(args: argparse.Namespace, action: str) -> int:
 
 def _mutating_media(args: argparse.Namespace, action: str) -> int:
     runner = Runner(dry_run=args.dry_run, verbose=args.verbose)
+    if args.command == "windows" and action == "add" and args.allow_windows7_csm and args.winpe_from is None:
+        raise FlexBootError('--allow-windows7-csm requires --winpe-from and UEFI firmware with CSM enabled')
     if args.dry_run:
         if action == "add":
             matches = []
@@ -379,6 +382,9 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
             if args.command == "windows" and args.winpe_from is not None:
                 payload["winpe_from"] = str(args.winpe_from)
                 payload["winpe_build_checked"] = False
+                if args.allow_windows7_csm:
+                    payload["requires_csm"] = True
+                    payload["firmware_checked"] = False
             if args.json:
                 print(json.dumps(payload, indent=2))
             else:
@@ -387,6 +393,8 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
                 print("Source-only dry run; target, duplicates, and free space were not checked. No changes made.")
                 if args.command == "windows" and args.winpe_from is not None:
                     print(f"Borrowed WinPE source: {args.winpe_from}. WIM builds and Setup compatibility were not checked.")
+                    if args.allow_windows7_csm:
+                        print('Windows 7 requires UEFI with CSM enabled and Secure Boot off; target firmware was not checked.')
             return 2 if any(item["status"] == "failed" for item in matches) else 0
         else:
             print(json.dumps({"action": action, "target": str(args.target), "persistent_changes": False}, indent=2) if args.json else f"Dry run: would {action} {args.target}. No changes made.")
@@ -404,16 +412,18 @@ def _mutating_media(args: argparse.Namespace, action: str) -> int:
             outcomes = []
             for source in args.isos:
                 try:
-                    record, status = windows.add(paths, source, runner, replace=args.replace, winpe_from=args.winpe_from)
+                    record, status = windows.add(paths, source, runner, replace=args.replace, winpe_from=args.winpe_from, allow_windows7_csm=args.allow_windows7_csm)
                     outcome = {"file":str(source), "status":status}
                     if 'winpe_source' in record:
                         outcome['winpe_source'] = record['winpe_source']
+                    if record.get('requires_csm'):
+                        outcome['requires_csm'] = True
                     outcomes.append(outcome)
                 except (FlexBootError, OSError) as exc:
                     outcomes.append({"file":str(source), "status":"failed", "reason":str(exc)})
                     if not args.continue_on_error or isinstance(exc, (SafetyError, MediaStateError, OSError)):
                         break
-            print(json.dumps({"isos":outcomes}, indent=2) if args.json else "\n".join(f"{r['status']}: {r['file']}" + (f" — {r['reason']}" if 'reason' in r else '') for r in outcomes))
+            print(json.dumps({"isos":outcomes}, indent=2) if args.json else "\n".join(f"{r['status']}: {r['file']}" + (' [UEFI with CSM required; Secure Boot off]' if r.get('requires_csm') else '') + (f" — {r['reason']}" if 'reason' in r else '') for r in outcomes))
             return 2 if any(r["status"] == "failed" for r in outcomes) else 0
         if action == "add":
             outcomes = batch_add(paths, args.isos, runner, replace=args.replace, continue_on_error=args.continue_on_error)

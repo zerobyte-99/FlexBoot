@@ -180,7 +180,7 @@ class WindowsTests(unittest.TestCase):
         self.assertEqual(set(Path(self.temp.name).iterdir()),before)
 
     def test_manifest_uuid_and_identifier_and_types(self):
-        for field,value in [('uuid','FEDCBA9876543210'),('token','../outside'),('images',None),('helper_sha256','z'*64),('schema_version',3)]:
+        for field,value in [('uuid','FEDCBA9876543210'),('token','../outside'),('images',None),('helper_sha256','z'*64),('schema_version',4)]:
             state=copy.deepcopy(self.state);state[field]=value
             windows.state_path(self.paths).write_text(json.dumps(state))
             with self.subTest(field=field),self.assertRaises(MediaStateError):windows.load(self.paths)
@@ -362,7 +362,7 @@ class WindowsTests(unittest.TestCase):
         (self.paths.grub_dir/'windows.cfg').write_text('bad menu')
         self.assertTrue(any('stale' in p for p in windows.verify(self.paths)))
 
-    def fake_add(self, source, *, runner=None, replace=False, winpe_from=None, donor_build=17134):
+    def fake_add(self, source, *, runner=None, replace=False, winpe_from=None, donor_build=17134, installer_build=9600, allow_windows7_csm=False):
         entries={p:(p,512 if p.endswith('.efi') else 1) for p in windows.REQUIRED}
         entries['sources/setup.exe'] = ('sources/setup.exe', 512)
         def extract(_source,entry,destination):
@@ -370,9 +370,78 @@ class WindowsTests(unittest.TestCase):
             else:destination.write_bytes(b'a')
         facts={'entries':entries,'size':source.stat().st_size}
         def info(path, _runner, **kwargs):
-            return 9600 if path.name == 'installer.wim' else (donor_build if winpe_from else 26100)
+            build = installer_build if path.name == 'installer.wim' else (donor_build if winpe_from else 26100)
+            if build < kwargs.get('minimum_build', windows.MIN_WINPE_BUILD):
+                raise FlexBootError('WinPE build below minimum')
+            return build
         with patch.object(windows,'inspect_source',return_value=facts), patch.object(windows,'extract',side_effect=extract), patch.object(windows,'wim_info',side_effect=info):
-            return windows.add(self.paths,source,runner or FakeRunner(),replace=replace,winpe_from=winpe_from)
+            return windows.add(self.paths,source,runner or FakeRunner(),replace=replace,winpe_from=winpe_from,allow_windows7_csm=allow_windows7_csm)
+
+    def test_windows7_explicit_gate_and_schema_preserved_with_other_images(self):
+        source=Path(self.temp.name)/'win7.iso';source.write_bytes(b'old installer')
+        donor=Path(self.temp.name)/'donor.iso';donor.write_bytes(b'PE source')
+        with self.assertRaises(FlexBootError):
+            self.fake_add(source,winpe_from=donor,installer_build=7600)
+        self.assertEqual(windows.load(self.paths)['images'], [])
+        record,status=self.fake_add(source,winpe_from=donor,installer_build=7600,allow_windows7_csm=True)
+        self.assertTrue(record['requires_csm'])
+        self.assertEqual(status,'added')
+        self.assertEqual(windows.load(self.paths)['schema_version'],3)
+        self.assertEqual(windows.verify(self.paths),[])
+        self.assertEqual(self.fake_add(source)[1],'skipped')
+        source.write_bytes(b'replacement')
+        with self.assertRaises(FlexBootError):
+            self.fake_add(source,replace=True,winpe_from=donor,installer_build=7600)
+        other=source.with_name('server.iso');other.write_bytes(b'server')
+        self.fake_add(other,winpe_from=donor)
+        self.assertEqual(windows.load(self.paths)['schema_version'],3)
+        self.assertEqual(windows.verify(self.paths),[])
+        windows.remove(self.paths,other.name,FakeRunner())
+        self.assertEqual(windows.verify(self.paths),[])
+
+    def test_windows7_flag_rejects_missing_donor_and_wrong_builds(self):
+        source=Path(self.temp.name)/'old.iso';source.write_bytes(b'old')
+        donor=Path(self.temp.name)/'donor.iso';donor.write_bytes(b'donor')
+        with self.assertRaisesRegex(FlexBootError,'requires --winpe-from'):
+            self.fake_add(source,allow_windows7_csm=True)
+        for build in (7602,9200,9600,14393,19041):
+            with self.subTest(build=build),self.assertRaisesRegex(FlexBootError,'only for Windows 7'):
+                self.fake_add(source,winpe_from=donor,installer_build=build,allow_windows7_csm=True)
+        self.fake_add(source,winpe_from=donor)
+        with self.assertRaisesRegex(FlexBootError,'only for Windows 7'):
+            self.fake_add(source,winpe_from=donor,allow_windows7_csm=True)
+
+    def test_csm_metadata_and_menu_annotation_cannot_be_lost_by_alias(self):
+        from flexboot.grub import generated_config
+        self.prepare_fake_record()
+        record=self.state['images'][0]
+        record.update(build=17134,requires_csm=True,winpe_source={'filename':'donor.iso','sha256':'d'*64,'installer_build':7600})
+        self.state['schema_version']=3
+        windows.state_path(self.paths).write_text(json.dumps(self.state))
+        self.assertEqual(windows.load(self.paths),self.state)
+        settings={'schema_version':1,'labels':{'Windows:'+record['filename']:'My custom name'},'order':[]}
+        self.assertIn('[Windows] My custom name [CSM required]',generated_config([],self.state,settings))
+        for schema,marker,build in [(2,True,7600),(3,False,7600),(3,1,7600),(3,True,9600)]:
+            invalid=copy.deepcopy(self.state);invalid['schema_version']=schema
+            invalid['images'][0]['requires_csm']=marker
+            invalid['images'][0]['winpe_source']['installer_build']=build
+            windows.state_path(self.paths).write_text(json.dumps(invalid))
+            with self.subTest(schema=schema,marker=marker,build=build),self.assertRaises(MediaStateError):
+                windows.load(self.paths)
+
+    def test_windows7_cli_dry_run_reports_unchecked_firmware(self):
+        from contextlib import redirect_stdout, redirect_stderr
+        from io import StringIO
+        from flexboot.cli import main
+        output=StringIO();errors=StringIO()
+        with redirect_stderr(errors):
+            self.assertEqual(main(['windows','add','/dev/missing','win7.iso','--allow-windows7-csm','--dry-run']),2)
+        with patch.object(windows,'inspect_source',return_value={}),redirect_stdout(output):
+            self.assertEqual(main(['windows','add','/dev/missing','win7.iso','--winpe-from','donor.iso','--allow-windows7-csm','--dry-run','--json']),0)
+        payload=json.loads(output.getvalue())
+        self.assertTrue(payload['requires_csm'])
+        self.assertFalse(payload['firmware_checked'])
+        self.assertFalse(payload['persistent_changes'])
 
     def test_borrowed_preparation_integrity_and_replacement(self):
         source=Path(self.temp.name)/'old.iso';source.write_bytes(b'old installer')

@@ -159,11 +159,38 @@ Using this mode upgrades Windows metadata to schema 2. FlexBoot 0.7.2 and older
 cannot manage that media; use the updated application for subsequent operations.
 No partition-layout migration is performed.
 
-See [older Windows experiments](TESTING-0.7.3.md) for measured installation and
-boot results. Eligibility alone does not establish support for every release.
-Windows 7 remains rejected. Its installed systems additionally need compatible
-firmware with CSM and suitable drivers; a newer WinPE does not supply those
-capabilities to the installed OS.
+See [older Windows experiments](TESTING-0.7.3.md) and the
+[Server 2012 / Windows 7 follow-up](TESTING-0.7.4.md) for measured installation
+and boot results. Eligibility alone does not establish support for every release.
+
+## Windows 7 x64 with CSM (experimental)
+
+Windows 7 remains rejected by default. To prepare an x64 WIM installer with
+index-2 boot build 7600 or 7601, explicitly opt in and supply a Windows 10 donor:
+
+```bash
+sudo flexboot windows add ./out/windows.img windows7.iso \
+  --winpe-from windows10.iso --allow-windows7-csm
+```
+
+The target must boot in **UEFI mode with CSM enabled and Secure Boot off**.
+FlexBoot cannot check another machine's firmware during preparation. This does
+not add BIOS boot support, and FlexBoot does not supply a CSM or modify firmware.
+The newer WinPE initializes the installer; the installed Windows 7 system still
+needs its own compatible storage, graphics and USB drivers.
+
+The tested image is a private ISO derived from supplied Windows 7 Enterprise
+x64 RTM installer files, with a Windows 10 1803 donor. It completed installation
+and reached account setup on a GPT destination in a fresh CSM-enabled QEMU VM
+without installer media. SP1 eligibility is implemented but SP1 and native
+hardware installation have not been tested. Supply a real ISO9660/UDF installer;
+renaming a raw USB disk image to `.iso` does not convert it.
+
+These records upgrade Windows metadata to schema 3, require FlexBoot 0.7.4 or
+newer, and preserve their firmware requirement across custom labels and menu
+ordering. The boot menu always appends `[CSM required]`. Adding other installers
+does not downgrade the schema. Replacing a Windows 7 entry requires the explicit
+flag again. No runtime components are downloaded or bundled by this option.
 
 ## Validation and limits
 

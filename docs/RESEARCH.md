@@ -147,3 +147,8 @@ workarounds, provisioning fixtures, failure cases, and remaining hardware limits
 - [Microsoft cross-platform Setup](https://learn.microsoft.com/en-us/windows-hardware/manufacture/desktop/windows-setup-supported-platforms-and-cross-platform-deployments?view=windows-11): documents selecting installation images through Setup and InstallFrom. The experimental mode keeps the selected older ISO's native Setup and destination-selection UI.
 - [Microsoft Windows 7 firmware requirements](https://learn.microsoft.com/en-us/windows-hardware/drivers/bringup/configure-system-firmware-for-windows-7-and-later-update-for-windows-10): UEFI installation still requires CSM for Windows 7.
 - [SeaBIOS CSM build documentation](https://github.com/qemu/seabios/blob/rel-1.16.3/docs/Build_overview.md): a source-built Csm16 can be included in OVMF, including for older Windows INT10 requirements. The firmware experiment stays outside the product and repository.
+
+## Windows 7 validation follow-up, 2026-10-16
+
+- [EDK II OVMF README, edk2-stable202211](https://github.com/tianocore/edk2/blob/edk2-stable202211/OvmfPkg/README) documents UEFI Windows 7 capabilities and firmware build considerations. A private CSM-enabled build was used for the destination-only test; no firmware is shipped with FlexBoot.
+- The Microsoft firmware checklist above specifies UEFI boot, GPT storage and CSM enabled for Windows 7. The measured RTM x64 installation reached account setup under these conditions. The explicit opt-in records this requirement; it does not imply support for CSM-free firmware or every Windows 7 edition/service pack.

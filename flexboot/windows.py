@@ -255,7 +255,7 @@ def load(paths) -> dict | None:
     regular(path, paths.data)
     try:
         state = json.loads(path.read_text())
-        if state['schema_version'] not in (1, 2) or not UUID.fullmatch(state['uuid']) or not UUID.fullmatch(state['efi_uuid']) or not DIGEST.fullmatch(state['token']):
+        if state['schema_version'] not in (1, 2, 3) or not UUID.fullmatch(state['uuid']) or not UUID.fullmatch(state['efi_uuid']) or not DIGEST.fullmatch(state['token']):
             raise ValueError('invalid schema or identity')
         for key in ('ntloader_sha256', 'helper_sha256'):
             if not DIGEST.fullmatch(state[key]): raise ValueError('invalid runtime hash')
@@ -280,13 +280,16 @@ def load(paths) -> dict | None:
                 raise ValueError('invalid WinPE build')
             if 'winpe_source' in record:
                 donor = record['winpe_source']
-                if state['schema_version'] != 2 or not isinstance(donor, dict) or set(donor) != {'filename', 'sha256', 'installer_build'}:
+                if state['schema_version'] not in (2, 3) or not isinstance(donor, dict) or set(donor) != {'filename', 'sha256', 'installer_build'}:
                     raise ValueError('invalid borrowed WinPE provenance')
                 validate_filename(donor['filename'])
                 if not DIGEST.fullmatch(donor['sha256']) or record['build'] > MAX_DONOR_WINPE_BUILD:
                     raise ValueError('invalid borrowed WinPE source or build')
-                if type(donor['installer_build']) is not int or not MIN_LEGACY_BUILD <= donor['installer_build'] < MIN_WINPE_BUILD:
+                legacy_csm = state['schema_version'] == 3 and record.get('requires_csm') is True and donor['installer_build'] in (7600, 7601)
+                if type(donor['installer_build']) is not int or not (legacy_csm or MIN_LEGACY_BUILD <= donor['installer_build'] < MIN_WINPE_BUILD):
                     raise ValueError('invalid older installer build')
+            if 'requires_csm' in record and not (state['schema_version'] == 3 and record['requires_csm'] is True and record.get('winpe_source', {}).get('installer_build') in (7600, 7601)):
+                raise ValueError('invalid CSM requirement')
             if record['size'] != record['files']['image.iso']['size']:
                 raise ValueError('image size differs from resource inventory')
             expected = {'image.iso', 'boot.wim', 'initrd.cpio'}
@@ -304,7 +307,10 @@ def menu(state: dict, labels: dict | None = None) -> str:
     lines = ['# FlexBoot Windows entries. Prepared resources; source ISOs remain intact.', '']
     for record in sorted(state['images'], key=lambda r:r['filename'].casefold()):
         image_id = record['id']
-        lines.extend([f"menuentry {grub_quote('[Windows] ' + (labels or {}).get(record['filename'], record['filename'] + ' — Windows installer'))} {{",
+        title = '[Windows] ' + (labels or {}).get(record['filename'], record['filename'] + ' — Windows installer')
+        if record.get('requires_csm'):
+            title += ' [CSM required]'
+        lines.extend([f"menuentry {grub_quote(title)} {{",
                       '  insmod ntfs', f"  search --no-floppy --fs-uuid --set=flexboot_efi {state['efi_uuid']}", f"  search --no-floppy --fs-uuid --set=flexboot_windows {state['uuid']}",
                       f"  linux ($flexboot_efi)/boot/grub/windows/ntloader uuid={state['uuid']} wim=/windows/{image_id}/boot.wim hires=no gfxmode=1024x768",
                       f'  initrd ($flexboot_windows)/windows/{image_id}/initrd.cpio', '}', ''])
@@ -402,7 +408,9 @@ def _identity(path: Path) -> tuple[int, ...]:
     return (value.st_dev, value.st_ino, value.st_size, value.st_mtime_ns, value.st_ctime_ns)
 
 
-def add(paths, source: Path, runner: Runner, *, replace: bool = False, winpe_from: Path | None = None):
+def add(paths, source: Path, runner: Runner, *, replace: bool = False, winpe_from: Path | None = None, allow_windows7_csm: bool = False):
+    if allow_windows7_csm and winpe_from is None:
+        raise FlexBootError('--allow-windows7-csm requires --winpe-from and UEFI firmware with CSM enabled')
     state=load(paths)
     if state is None:raise FlexBootError('Windows support was not enabled when this media was created')
     if verify(paths,full_hash=False):raise MediaStateError('Windows media is inconsistent; run verify')
@@ -418,6 +426,8 @@ def add(paths, source: Path, runner: Runner, *, replace: bool = False, winpe_fro
     image_id=identifier(source.name)
     previous=next((r for r in state['images'] if r['id']==image_id),None)
     if previous and not replace:
+        if allow_windows7_csm and not previous.get('requires_csm'):
+            raise FlexBootError('--allow-windows7-csm is only for Windows 7 x64 installers')
         if winpe_from is not None and previous.get('winpe_source', {}).get('sha256') != donor_digest:
             raise FlexBootError('Different WinPE source selected; use --replace')
         if sha256_file(source)==previous['files']['image.iso']['sha256']:
@@ -443,8 +453,10 @@ def add(paths, source: Path, runner: Runner, *, replace: bool = False, winpe_fro
         installer_build = None
         if winpe_from is not None:
             extract(stage/'image.iso', copied['entries']['sources/boot.wim'], stage/'installer.wim')
-            installer_build = wim_info(stage/'installer.wim', runner, minimum_build=MIN_LEGACY_BUILD)
+            installer_build = wim_info(stage/'installer.wim', runner, minimum_build=7600 if allow_windows7_csm else MIN_LEGACY_BUILD)
             (stage/'installer.wim').unlink()
+            if allow_windows7_csm and installer_build not in (7600, 7601):
+                raise FlexBootError('--allow-windows7-csm is only for Windows 7 x64 installers (7600/7601)')
             if installer_build >= MIN_WINPE_BUILD:
                 raise FlexBootError('This installer has a supported native WinPE; omit --winpe-from')
             extract(stage/'image.iso', copied['entries']['sources/setup.exe'], stage/'source-setup.exe')
@@ -474,7 +486,9 @@ def add(paths, source: Path, runner: Runner, *, replace: bool = False, winpe_fro
             if _identity(winpe_from) != donor_identity:
                 raise FlexBootError('WinPE source changed during preparation')
             record['winpe_source'] = {'filename': winpe_from.name, 'sha256': donor_digest, 'installer_build': installer_build}
-            state['schema_version'] = 2
+            if allow_windows7_csm:
+                record['requires_csm'] = True
+            state['schema_version'] = max(state['schema_version'], 3 if allow_windows7_csm else 2)
         if previous:os.replace(destination,backup)
         os.replace(stage,destination);installed=True
         state['images']=[r for r in state['images'] if r['id']!=image_id]+[record]

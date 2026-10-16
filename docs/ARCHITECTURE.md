@@ -66,7 +66,13 @@ Windows 10 WinPE resources. The selected older ISO supplies its own Setup and
 installation WIM; the donor supplies only the temporary boot environment.
 Windows metadata schema 2 records donor provenance and installer build. Donor
 identity is checked around preparation, and changes require explicit replacement.
-Windows 7 remains gated out pending firmware and installation validation.
+Windows 7 x64 build 7600/7601 additionally requires an explicit
+`--allow-windows7-csm` opt-in and a donor. Schema 3 records a canonical
+`requires_csm: true` requirement, validates it against installer provenance,
+and preserves it when other images are added. Boot titles append the requirement
+even when aliased. This option does not change the runtime or supply firmware;
+the installed OS requires UEFI with CSM enabled. Default preparation still
+rejects Windows 7.
 
 ## Menu presentation settings
 
