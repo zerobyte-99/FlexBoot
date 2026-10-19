@@ -44,18 +44,20 @@ def distribution() -> dict[str, str]:
 
 def missing_packages(report: dict[str, object]) -> list[str]:
     packages = {item["package"] for item in report["required"].values() if not item["found"] or not item.get("usable", True)}
-    if report["profile"] in ("create", "image"):
+    if report["profile"] in ("create", "image", "create-exfat", "image-exfat"):
         if not report["grub_target_x86_64_efi"]:
             packages.add("grub-efi-amd64-bin")
         if not report["grub_unicode_font"]:
             packages.add("grub2-common")
+        if "GRUB x86_64-efi exFAT module" in report["capabilities"][report["profile"]]["missing"]:
+            packages.add("grub-efi-amd64-bin")
     if report["profile"] == "qemu" and not report["optional"]["OVMF"]["found"]:
         packages.add("ovmf")
     return sorted(packages)
 
 
 def dependency_plan(report: dict[str, object], *, yes: bool = False) -> list[str]:
-    if report["host"]["system"] != "Linux" or (report["profile"] in ("create", "image") and report["host"]["architecture"].lower() not in ("x86_64", "amd64")):
+    if report["host"]["system"] != "Linux" or (report["profile"] in ("create", "image", "create-exfat", "image-exfat") and report["host"]["architecture"].lower() not in ("x86_64", "amd64")):
         raise FlexBootError("The selected capability is not supported on this host; installing packages cannot fix its platform")
     packages = missing_packages(report)
     if not packages:

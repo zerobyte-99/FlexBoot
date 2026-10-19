@@ -152,3 +152,25 @@ workarounds, provisioning fixtures, failure cases, and remaining hardware limits
 
 - [EDK II OVMF README, edk2-stable202211](https://github.com/tianocore/edk2/blob/edk2-stable202211/OvmfPkg/README) documents UEFI Windows 7 capabilities and firmware build considerations. A private CSM-enabled build was used for the destination-only test; no firmware is shipped with FlexBoot.
 - The Microsoft firmware checklist above specifies UEFI boot, GPT storage and CSM enabled for Windows 7. The measured RTM x64 installation reached account setup under these conditions. The explicit opt-in records this requirement; it does not imply support for CSM-free firmware or every Windows 7 edition/service pack.
+
+
+## 2026-10-19 — Read-only discovery and exFAT
+
+- [GNU GRUB scripting and regexp module](https://www.gnu.org/software/grub/manual/grub/grub.html): wildcard expansion, positional menu parameters, and filesystem modules.
+- [GRUB loopback](https://www.gnu.org/software/grub/manual/grub/html_node/loopback.html): bind and release a filesystem image without writing it.
+- [GRUB file checks](https://www.gnu.org/software/grub/manual/grub/html_node/file.html): combine x86 Linux recognition with x86-64 EFI recognition for the limited discovery path.
+- [Debian live-boot manual](https://dyn.manpages.debian.org/unstable/live-boot-doc/live-boot.7.en.html): `findiso` and filesystem handling, including exFAT controls. Actual initramfs capabilities vary by image.
+- [Linux exFAT driver](https://docs.kernel.org/next/filesystems/exfat.html): kernel filesystem support does not establish that a particular live-image initramfs includes it.
+
+Keep explicit experimental exFAT Linux storage separate from the tested NTFS
+Windows installer backend. Boot discovery uses fixed boot recipes and never
+sources configuration embedded inside a newly copied ISO.
+
+- [Microsoft filesystem comparison](https://learn.microsoft.com/windows/win32/fileio/filesystem-functionality-comparison): exFAT supports large files but lacks the link features used by existing managed boot aliases.
+- [Apple cross-platform formatting guidance](https://support.apple.com/guide/disk-utility/format-a-disk-for-windows-computers-dskutl1010/mac): exFAT is a Windows/Mac exchange format; this does not establish live Linux initramfs compatibility.
+
+Measured Ubuntu Server 24.04.4 on exFAT entered its initramfs shell because it
+could not find the ISO. Keep Casper excluded on exFAT until a validated solution
+exists. The same source reached its installer from NTFS. GParted reached its
+desktop from the actual CLI-created exFAT image; these results support an explicit
+experimental option, not a new universal default.

@@ -126,3 +126,32 @@ the tested environment; physical media creation remains a human operation.
 
 The [Windows experiment record](WINDOWS-EXPERIMENTS.md) documents the measured
 results and the explicit Basic Data FAT boot-layout requirement.
+
+## Boot-time discovery regression tests
+
+`tests/test_discovery.py` includes a file-only QEMU/OVMF test with synthetic
+Linux/EFI headers. It checks supported menu entries, managed-entry deduplication,
+case-insensitive extensions, and rejection of incomplete/unknown images, 32-bit
+headers, special filenames and nested files. Synthetic images are never booted.
+Run it with `FLEXBOOT_RUN_GRUB_TESTS=1 python3 -m unittest tests.test_discovery -v`.
+It requires QEMU, OVMF, `grub-mkstandalone`, `mkfs.ext4` and `genisoimage`.
+`FLEXBOOT_QEMU`, `FLEXBOOT_OVMF`, `FLEXBOOT_QEMU_DATA` and `FLEXBOOT_MKISO` may
+select local installations. This test needs no root, mounts or physical devices.
+
+The privileged image suite additionally provisions exFAT through the actual CLI
+and checks add/label/sync/remove, integrity verification, and safe rejection of
+unsupported filenames. It uses only owned loop-backed images.
+
+To test a real ISO without importing it into the manifest:
+
+```bash
+python3 tools/test_iso_boot.py ./clonezilla.iso ./out/discovery-test \
+  --discover --expect 'user@debian:~$' --timeout 300
+```
+
+The helper deliberately copies the file without calling `add` and instruments
+serial arguments only. The generated manifest stays empty, so GRUB discovery
+must supply the selected entry. TCG is the default; `--accel kvm` is optional
+when available. Choose a userspace marker, inspect the screenshots, and allow
+adequate temporary disk space. The [0.7.7 report](TESTING-0.7.7.md) records the
+actual tested filesystem/image combinations.

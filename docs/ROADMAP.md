@@ -22,3 +22,10 @@ clear compatibility limits, and preserving existing media.
 
 Suggested order after documentation: Linux compatibility and failure recovery,
 then deeper Windows validation and richer compatibility diagnostics.
+
+- [x] Add read-only discovery for a conservative Linux subset at boot and an
+  explicit experimental exFAT Linux data option; see [workflow and limits](BOOT-DISCOVERY.md).
+- [ ] Expand discovery coverage and filename handling. Validate exFAT across
+  older live images and solve the measured Ubuntu Casper rediscovery failure
+  before considering a default change; investigate whether
+  Windows installer preparation can reliably share exFAT storage.

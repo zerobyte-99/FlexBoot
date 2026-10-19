@@ -5,6 +5,10 @@ import re
 from .base import BootPlan, ISOInspection, ProfileMatch
 
 
+SERVER_ARGS = "iso-scan/filename=${iso_path} ---"
+DESKTOP_ARGS = "boot=casper iso-scan/filename=${iso_path} quiet splash --"
+
+
 class UbuntuCasperProfile:
     profile_id = "ubuntu-casper"
     description = "Ubuntu family (casper)"
@@ -37,9 +41,9 @@ class UbuntuCasperProfile:
                 layer = parent
         if server_layout:
             return ProfileMatch("ubuntu-server-casper", "Ubuntu Server (casper)",
-                                BootPlan("linux", kernel, (initrd,), "iso-scan/filename=${iso_path} ---"))
+                                BootPlan("linux", kernel, (initrd,), SERVER_ARGS))
         layer_arg = f" layerfs-path={layers[0].rsplit('/', 1)[1]}" if not standard_layout and len(layers) == 1 else ""
         return ProfileMatch(
             self.profile_id, self.description,
-            BootPlan("linux", kernel, (initrd,), f"boot=casper iso-scan/filename=${{iso_path}}{layer_arg} quiet splash --"),
+            BootPlan("linux", kernel, (initrd,), DESKTOP_ARGS.replace(" quiet", layer_arg + " quiet")),
         )

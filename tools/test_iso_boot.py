@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import shutil
 import socket
 import subprocess
@@ -47,16 +48,27 @@ def run_test(args: argparse.Namespace) -> None:
         paths = MediaPaths(work / "media", work / "tree")
         identity = str(uuid.uuid4())
         initialize(paths, identity, Runner())
-        record = add_iso(paths, source)
-        if record.boot_kind != "linux":
-            raise RuntimeError("This helper instruments Linux entries only; vendor submenus need manual testing")
-        record = replace(record, boot_args=record.boot_args + " console=ttyS0,115200")
+        if args.discover:
+            if not re.fullmatch(r"[A-Za-z0-9_+.-]+\.[iI][sS][oO]", source.name):
+                raise RuntimeError("Discovery requires a simple ISO filename without whitespace")
+            # Deliberately bypass add/inspection/manifest updates: the only
+            # source of this entry must be the production boot-time scanner.
+            shutil.copyfile(source, paths.iso_dir / source.name)
+        else:
+            record = add_iso(paths, source)
+            if record.boot_kind != "linux":
+                raise RuntimeError("This helper instruments Linux entries only; vendor submenus need manual testing")
+            record = replace(record, boot_args=record.boot_args + " console=ttyS0,115200")
         config = paths.grub_dir / "grub.cfg"
+        base = base_config(identity)
+        if args.discover:
+            # Instrument serial output only, preserving the discovery logic.
+            base = base.replace('"${iso_path}"', '"${iso_path}" console=ttyS0,115200')
         config.write_text("set root=(memdisk)\ninsmod serial\nserial --unit=0 --speed=115200\n"
-                          "terminal_output serial\n" + base_config(identity) +
+                          "terminal_output serial\n" + base +
                           "terminal_output gfxterm serial\necho FLEXBOOT_ISO_TEST_READY\n")
         menu = paths.grub_dir / "generated.cfg"
-        menu.write_text(generated_config([record]))
+        menu.write_text(generated_config([] if args.discover else [record]))
         validate_config(config)
         validate_config(menu)
         for path in (config, menu):
@@ -73,7 +85,7 @@ def run_test(args: argparse.Namespace) -> None:
         shutil.copyfile(variables, writable_variables)
         monitor = work / "qmp.sock"
         serial = output / "serial.log"
-        command = [args.qemu, "-machine", "q35,accel=tcg", "-m", "1536", "-display", "none", "-nic", "none", "-no-reboot",
+        command = [args.qemu, "-machine", f"q35,accel={args.accel}", "-m", "1536", "-display", "none", "-nic", "none", "-no-reboot",
                    "-drive", f"if=pflash,format=raw,readonly=on,file={code}",
                    "-drive", f"if=pflash,format=raw,file={writable_variables}",
                    "-drive", f"file=fat:ro:{work / 'esp'},format=raw,if=ide,snapshot=on",
@@ -141,6 +153,8 @@ def main() -> None:
     parser.add_argument("iso", type=Path)
     parser.add_argument("output", type=Path, help="new evidence directory")
     parser.add_argument("--expect", required=True, help="serial userspace/login marker; choose carefully")
+    parser.add_argument("--discover", action="store_true", help="copy an unregistered ISO and test boot-time discovery")
+    parser.add_argument("--accel", choices=("tcg", "kvm"), default="tcg", help="optional KVM acceleration; default does not require hardware virtualization")
     parser.add_argument("--timeout", type=int, default=300)
     parser.add_argument("--qemu", default="qemu-system-x86_64")
     parser.add_argument("--qemu-data", type=Path)

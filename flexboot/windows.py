@@ -326,7 +326,7 @@ def publish(paths, state: dict, runner: Runner) -> None:
         state_path(paths): json.dumps(state, indent=2, sort_keys=True) + '\n',
         paths.grub_dir / 'windows.cfg': menu(state),
         paths.grub_dir / 'generated.cfg': menu_config(paths, manifest, state),
-        paths.grub_dir / 'grub.cfg': base_config(manifest.data_filesystem_uuid),
+        paths.grub_dir / 'grub.cfg': base_config(manifest.data_filesystem_uuid, paths.data_filesystem),
     }
     originals = {path: path.read_text() if path.exists() else None for path in contents}
     candidates = []
@@ -357,6 +357,7 @@ def initialize(paths, ntloader: Path, helper: Path, expected: str, runner: Runne
     token = uuid.uuid4().hex + uuid.uuid4().hex
     root = paths.windows
     (root / 'windows').mkdir()
+    (root / 'iso').mkdir(exist_ok=True)
     marker = root / '.flexboot-windows'
     marker.mkdir(); atomic_text(marker / f'{token}.marker', paths.windows_uuid+'\n')
     target = paths.grub_dir / 'windows'; target.mkdir()

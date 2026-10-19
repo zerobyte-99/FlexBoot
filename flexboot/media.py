@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import struct
 import uuid
@@ -28,6 +29,7 @@ class MediaPaths:
     windows_uuid: str = ""
     efi_uuid: str = ""
     boot_partition_role: str = "esp"
+    data_filesystem: str = "ext4"
 
     @property
     def manifest(self) -> Path:
@@ -174,12 +176,12 @@ def initialize(paths: MediaPaths, data_uuid: str, runner: Runner | None = None) 
     manifest.save(paths.manifest)
     (metadata / "lock").touch(mode=0o600, exist_ok=True)
     (metadata / "version").write_text(__version__ + "\n", encoding="utf-8")
-    install = {"version": __version__, "architecture": "x86_64", "firmware": "UEFI",
+    install = {"version": __version__, "architecture": "x86_64", "firmware": "UEFI", "data_filesystem": paths.data_filesystem,
                "data_uuid": data_uuid, "boot_partition_role": paths.boot_partition_role}
     atomic_text(metadata / "install.json", json.dumps(install, indent=2, sort_keys=True) + "\n")
     default_theme = Path(BRAND.theme_background).stem.removeprefix("background-")
     atomic_text(paths.theme_config, json.dumps({"schema_version": 1, "layout": "flexboot", "kind": "builtin", "name": default_theme}, indent=2, sort_keys=True) + "\n")
-    atomic_text(paths.grub_dir / "grub.cfg", base_config(data_uuid))
+    atomic_text(paths.grub_dir / "grub.cfg", base_config(data_uuid, paths.data_filesystem))
     atomic_text(paths.grub_dir / "generated.cfg", generated_config([]))
     deploy_theme(paths.efi)
     validate_config(paths.grub_dir / "grub.cfg", runner)
@@ -238,7 +240,7 @@ def menu_config(paths: MediaPaths, manifest: Manifest, windows_state=None) -> st
 def regenerate(paths: MediaPaths, manifest: Manifest, runner: Runner | None = None, *, windows_state=None) -> None:
     destinations = {
         paths.grub_dir / "generated.cfg": menu_config(paths, manifest, windows_state),
-        paths.grub_dir / "grub.cfg": base_config(manifest.data_filesystem_uuid),
+        paths.grub_dir / "grub.cfg": base_config(manifest.data_filesystem_uuid, paths.data_filesystem),
     }
     originals = {p: p.read_text() if p.exists() else None for p in destinations}
     candidates = []
@@ -282,14 +284,28 @@ def check_free_space(paths: MediaPaths, size: int) -> None:
         raise MediaStateError(f"Not enough free space: need {required} bytes including metadata reserve; available {available} bytes")
 
 
+def validate_data_filename(paths: MediaPaths, filename: str) -> None:
+    validate_filename(filename)
+    if paths.data_filesystem == "exfat" and not re.fullmatch(r"[A-Za-z0-9_+.-]+\.[iI][sS][oO]", filename):
+        raise FlexBootError("exFAT ISO names must use ASCII letters, digits, dots, underscores, + or -. Rename the ISO before copying; exFAT cannot store the boot aliases used for other names.")
+
+
+def validate_data_profile(paths: MediaPaths, profile: str) -> None:
+    from .discovery import EXFAT_PROFILE_IDS
+    if paths.data_filesystem == "exfat" and profile not in EXFAT_PROFILE_IDS:
+        raise FlexBootError(f"Profile {profile} is not enabled on experimental exFAT storage. Use ext4 for this image; tested Ubuntu Casper could not rediscover its ISO on exFAT. See docs/BOOT-DISCOVERY.md.")
+
+
 def add_iso_result(paths: MediaPaths, source: Path, runner: Runner | None = None, *, replace: bool = False) -> AddResult:
+    validate_data_filename(paths, source.name)
     run = runner or Runner()
     source = source.resolve()
-    validate_filename(source.name)
+    validate_data_filename(paths, source.name)
     if not source.is_file():
         raise FlexBootError(f"ISO is not a regular file: {source}")
     inspected_state = source.stat()
     match = require_supported(source, run)
+    validate_data_profile(paths, match.profile)
     manifest = Manifest.load(paths.manifest)
     destination = paths.iso_dir / source.name
     previous = next((item for item in manifest.isos if item.filename == source.name), None)
@@ -402,9 +418,11 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
     old = Manifest.load(paths.manifest)
     records: list[ISORecord] = []
     for iso_path in sorted((path for path in paths.iso_dir.iterdir() if path.suffix.casefold() == ".iso"), key=lambda path: path.name.casefold()):
+        validate_data_filename(paths, iso_path.name)
         if iso_path.is_symlink() or not iso_path.is_file():
             raise MediaStateError(f"ISO is not a regular file: {iso_path.name}")
         match = require_supported(iso_path, runner)
+        validate_data_profile(paths, match.profile)
         previous = next((item for item in old.isos if item.filename == iso_path.name), None)
         digest = sha256_file(iso_path)
         if previous and digest != previous.sha256:
@@ -438,7 +456,7 @@ def sync(paths: MediaPaths, runner: Runner | None = None) -> Manifest:
         if theme.is_dir():
             shutil.copytree(theme, stage.grub_dir / "themes/flexboot")
         deploy_theme(work, configured_background(paths), str(setting["layout"]))
-        for name, text in (("grub.cfg", base_config(old.data_filesystem_uuid)), ("generated.cfg", menu_config(paths, old))):
+        for name, text in (("grub.cfg", base_config(old.data_filesystem_uuid, paths.data_filesystem)), ("generated.cfg", menu_config(paths, old))):
             atomic_text(stage.grub_dir / name, text)
             validate_config(stage.grub_dir / name, runner)
         created_aliases = ensure_aliases(paths.data, (item.filename for item in old.isos))
@@ -492,6 +510,11 @@ def verify(paths: MediaPaths, *, full_hash: bool = True) -> list[str]:
     for name in sorted(actual_names - expected_names):
         problems.append(f"ISO file is absent from manifest: {name}")
     for record in manifest.isos:
+        try:
+            validate_data_filename(paths, record.filename)
+            validate_data_profile(paths, record.profile)
+        except FlexBootError as exc:
+            problems.append(str(exc))
         path = paths.iso_dir / record.filename
         if path.is_symlink() or (path.exists() and not path.is_file()):
             problems.append(f"ISO is not a regular file: {record.filename}")
@@ -556,6 +579,7 @@ def inspect(paths: MediaPaths, *, full_hash: bool = False) -> dict[str, object]:
         "menu": listing(paths),
         "windows": windows,
         "boot_partition_role": paths.boot_partition_role,
+        "data_filesystem": paths.data_filesystem,
         "version": __version__, "data_filesystem_uuid": manifest.data_filesystem_uuid,
         "bootloader": str(paths.efi / "EFI" / "BOOT" / "BOOTX64.EFI"),
         "bootloader_present": (paths.efi / "EFI" / "BOOT" / "BOOTX64.EFI").is_file(),

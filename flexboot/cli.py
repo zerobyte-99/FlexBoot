@@ -38,6 +38,8 @@ def _add_output_options(parser: argparse.ArgumentParser, *, dry_run: bool = Fals
 
 
 def _windows_creation_options(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--data-filesystem", choices=("ext4", "exfat"), default="ext4",
+                        help="Linux ISO storage (default: ext4); experimental exfat allows copying from Windows for selected Debian Live/Clonezilla/GParted images")
     parser.add_argument("--windows-size", help="opt in to a third NTFS Windows partition, e.g. 24G")
     parser.add_argument("--windows-boot-layout", choices=("basic-fat",),
                         help="explicitly use a FAT32 Basic Data boot partition; firmware must support booting FAT without the ESP GUID")
@@ -58,16 +60,17 @@ def _windows_creation(args: argparse.Namespace) -> dict:
             raise FlexBootError("Windows creation requires >=4G, --ntloader, --ntloader-sha256 and --windows-helper")
         from .windows import require_runtime
         require_runtime(args.ntloader, args.ntloader_sha256, args.windows_helper)
-    return {"windows_size": size, "boot_partition_role": "basic-fat" if size else "esp", "ntloader": args.ntloader,
+    return {"data_filesystem": args.data_filesystem, "windows_size": size, "boot_partition_role": "basic-fat" if size else "esp", "ntloader": args.ntloader,
             "ntloader_sha256": args.ntloader_sha256 or "", "windows_helper": args.windows_helper}
 
 
 def _creation_layout(options: dict) -> list[str]:
+    filesystem = options["data_filesystem"]
     if options['windows_size']:
         return [f"512 MiB FAT32 Basic Data boot partition {BRAND.efi_label}",
-                f"remaining minus Windows reserve ext4 {BRAND.data_label}",
+                f"remaining minus Windows reserve {filesystem} {BRAND.data_label}",
                 f"{format_size(options['windows_size'])} NTFS {BRAND.windows_label}"]
-    return [f"512 MiB FAT32 ESP {BRAND.efi_label}", f"remaining ext4 {BRAND.data_label}"]
+    return [f"512 MiB FAT32 ESP {BRAND.efi_label}", f"remaining {filesystem} {BRAND.data_label}"]
 
 
 @contextmanager
@@ -286,7 +289,7 @@ def _confirm_interactive(device: Device) -> None:
 def command_create(args: argparse.Namespace) -> int:
     runner = Runner(dry_run=args.dry_run, verbose=args.verbose)
     windows_options = _windows_creation(args)
-    preflight("create")
+    preflight("create-exfat" if args.data_filesystem == "exfat" else "create")
     all_devices, protected = device_inventory()
     device = find_device(args.target)
     validate_physical_target(device, protected_names=protected, allow_non_usb=args.allow_non_usb)
@@ -530,10 +533,10 @@ def command_image(args: argparse.Namespace) -> int:
             raise FlexBootError("Leave at least 2 GiB for EFI/Linux storage")
         if args.dry_run:
             create_sparse(args.path, size, runner=runner)
-            print(f"Dry run: would create sparse image {args.path} ({format_size(size)})." + (f" FAT32 Basic Data boot partition; Windows NTFS reserve: {format_size(windows_options['windows_size'])}." if windows_options["windows_size"] else "") + " No changes made.")
+            print(f"Dry run: would create sparse image {args.path} ({format_size(size)}). Layout: {' + '.join(_creation_layout(windows_options))}. No changes made.")
             return 0
         require_root()
-        preflight("image")
+        preflight("image-exfat" if args.data_filesystem == "exfat" else "image")
         created = False
         try:
             create_sparse(args.path, size, runner=runner)

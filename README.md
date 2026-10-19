@@ -29,6 +29,7 @@ FlexBoot uses standard Linux utilities and the GNU GRUB supplied by the host dis
 - Transactional ISO copies, SHA-256 integrity records, and generated-menu verification.
 - Two selectable GRUB layouts and four original wallpapers, plus custom PNG support.
 - Raw-image creation for safer development and optional QEMU/OVMF testing.
+- Read-only Linux ISO discovery at boot, plus experimental exFAT data storage for copying from Windows.
 - Optional Windows installer preparation with intact NTFS ISO storage and one shared GRUB menu; [firmware requirements apply](docs/WINDOWS.md).
 - Python standard library implementation with no mandatory third-party Python packages.
 
@@ -256,6 +257,25 @@ sudo python3 -m flexboot verify /dev/sdX
 sudo python3 -m flexboot verify /dev/sdX --quick
 ```
 
+## Copying Linux ISOs from Windows
+
+For a **new** drive, experimental exFAT storage is available explicitly:
+
+```bash
+flexboot doctor --for create-exfat
+sudo flexboot create /dev/sdX --data-filesystem exfat --dry-run
+# Creation erases the selected drive; inspect its identity and layout first.
+sudo flexboot create /dev/sdX --data-filesystem exfat
+```
+
+The boot partition stays FAT32; the data partition becomes exFAT. Copy compatible
+Linux ISOs into its `iso/` folder from Windows. ExFAT support is initially limited
+to Debian Live/Kali, Clonezilla and GParted profiles. Ext4 remains the default:
+tested Ubuntu Server 24.04.4 could not find its ISO on exFAT, so Casper images
+are excluded there. The
+optional Windows installer partition remains NTFS. Existing media is never
+converted automatically. See the [validation report](docs/TESTING-0.7.7.md).
+
 ## Media management
 
 ```bash
@@ -269,12 +289,20 @@ sudo python3 -m flexboot remove /dev/sdX old.iso
 sudo python3 -m flexboot sync /dev/sdX
 ```
 
-You can also copy supported Linux ISOs directly into the ext4 data partition's
-`iso/` directory, then run `sudo flexboot sync /dev/sdX` to inspect them and
-update the menu. Files must be directly inside `iso/`, not nested in subdirectories.
-Copying alone does not update GRUB. Prefer `flexboot add` for its transactional
-copying and integrity recording. Windows ISOs require `flexboot windows add` to
-prepare boot resources; copying them onto NTFS and running `sync` does not import them.
+Starting with 0.7.7, supported Linux layouts can also be **discovered at boot**:
+copy a simply named ISO (for example `debian-live.iso`) directly into `iso/` on
+the data partition, or into `iso/` on an existing Windows NTFS partition. Safely
+eject and boot: matching files appear as `[Linux] ... [discovered]` without a host
+import. This initial scanner supports classic Casper, current Ubuntu Server,
+and canonical Debian Live/Kali, Clonezilla and GParted layouts; it covers fewer
+variants than the host profiles. Spaces and unusual characters need renaming.
+See [boot-time discovery and exFAT](docs/BOOT-DISCOVERY.md) for exact limits.
+
+Existing drives need a one-time `sudo flexboot sync /dev/sdX` with the updated
+application to deploy the scanner. That operation does not change the partition
+layout. Host `add`/`sync` remain available for managed entries with recorded
+hashes, custom labels and ordering. Windows installers still require
+`flexboot windows add`; copying a Windows ISO alone does not prepare it.
 
 `sync` stops if an unsupported ISO is present. Unsupported files never receive guessed boot entries.
 It also rejects changed integrity hashes rather than accepting same-size changes.
@@ -496,6 +524,7 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 | [Installation](docs/INSTALLATION.md) | Dependency setup and the global command |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common dependency, ISO, GRUB, and theme issues |
 | [Research](docs/RESEARCH.md) | Primary technical references |
+| [Boot discovery and exFAT](docs/BOOT-DISCOVERY.md) | Copy-and-boot workflow, filesystem choices and limits |
 | [Possible next steps](docs/ROADMAP.md) | Compatibility, recovery, and diagnostics candidates |
 
 ## Current limitations

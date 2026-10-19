@@ -14,13 +14,21 @@ from .process import Runner
 ESP_MIB = 512
 ESP_GUID = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b"
 BASIC_DATA_GUID = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7"
+LINUX_DATA_GUID = "0fc63daf-8483-4772-8e79-3d69d8477de4"
+
+
+def data_partition_type(filesystem: str) -> str:
+    if filesystem not in ("ext4", "exfat"):
+        raise SafetyError("Data filesystem must be ext4 or exfat")
+    return LINUX_DATA_GUID if filesystem == "ext4" else BASIC_DATA_GUID
 
 
 def partition_device(device: Path, runner: Runner, *, windows_size: int = 0,
-                     boot_partition_role: str = "esp") -> None:
+                     boot_partition_role: str = "esp", data_filesystem: str = "ext4") -> None:
     """Create the GPT layout, including Windows only when explicitly reserved."""
     if boot_partition_role not in ("esp", "basic-fat") or (boot_partition_role == "basic-fat" and not windows_size):
         raise SafetyError("The Basic Data boot layout requires an explicit Windows reserve")
+    data_type = data_partition_type(data_filesystem)
     sector_result = runner.run(["blockdev", "--getss", str(device)])
     try:
         sector_size = int(sector_result.stdout.strip())
@@ -34,7 +42,7 @@ def partition_device(device: Path, runner: Runner, *, windows_size: int = 0,
         "unit: sectors\n"
         "\n"
         f"size={esp_sectors}, type=U, name=\"{BRAND.product_name} EFI\"\n"
-        f"type=L, name=\"{BRAND.product_name} Data\"\n"
+        f"type={data_type}, name=\"{BRAND.product_name} Data\"\n"
     )
     if windows_size:
         try:
@@ -48,7 +56,7 @@ def partition_device(device: Path, runner: Runner, *, windows_size: int = 0,
         boot_type = "U" if boot_partition_role == "esp" else BASIC_DATA_GUID
         layout = ("label: gpt\nunit: sectors\n\n"
                   f'size={esp_sectors}, type={boot_type}, name="{BRAND.product_name} EFI"\n'
-                  f'size={linux_sectors}, type=L, name="{BRAND.product_name} Data"\n'
+                  f'size={linux_sectors}, type={data_type}, name="{BRAND.product_name} Data"\n'
                   f'type={BASIC_DATA_GUID}, name="{BRAND.product_name} Windows"\n')
     runner.run(["wipefs", "--all", "--force", str(device)], mutate=True)
     runner.run(["sfdisk", "--wipe", "always", str(device)], input_text=layout, mutate=True)
@@ -57,7 +65,7 @@ def partition_device(device: Path, runner: Runner, *, windows_size: int = 0,
 
 
 def discover_partitions(device: Path, runner: Runner, *, include_windows: bool = False,
-                        boot_partition_role: str | None = None) -> tuple[Path, ...]:
+                        boot_partition_role: str | None = None, data_filesystem: str = "ext4") -> tuple[Path, ...]:
     roots = discover(runner, device)
     root = next((item for item in roots if item.path.resolve() == device.resolve()), None)
     if not root:
@@ -77,16 +85,18 @@ def discover_partitions(device: Path, runner: Runner, *, include_windows: bool =
         if boot_partition_role not in ("esp", "basic-fat"):
             raise SafetyError("Unknown requested boot partition role")
         allowed_boot_types &= {ESP_GUID if boot_partition_role == "esp" else BASIC_DATA_GUID}
-    if parts[0].partition_type not in allowed_boot_types or parts[1].partition_type != "0fc63daf-8483-4772-8e79-3d69d8477de4":
+    if parts[0].partition_type not in allowed_boot_types or parts[1].partition_type != data_partition_type(data_filesystem):
         raise SafetyError("Target partition roles do not match FlexBoot EFI/data layout")
     if len(parts) == 3 and parts[2].partition_type != BASIC_DATA_GUID:
         raise SafetyError("Third partition must have the Windows data role")
     return tuple(part.path for part in parts)
 
 
-def format_partitions(efi: Path, data: Path, runner: Runner) -> None:
+def format_partitions(efi: Path, data: Path, runner: Runner, *, data_filesystem: str = "ext4") -> None:
+    data_partition_type(data_filesystem)
     runner.run(["mkfs.fat", "-F", "32", "-n", BRAND.efi_label, str(efi)], capture=False, mutate=True)
-    runner.run(["mkfs.ext4", "-F", "-L", BRAND.data_label, str(data)], capture=False, mutate=True)
+    command = ["mkfs.ext4", "-F", "-L", BRAND.data_label, str(data)] if data_filesystem == "ext4" else ["mkfs.exfat", "-L", BRAND.data_label, str(data)]
+    runner.run(command, capture=False, mutate=True)
     runner.run(["udevadm", "settle"], mutate=True)
 
 

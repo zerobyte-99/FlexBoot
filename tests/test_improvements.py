@@ -352,7 +352,7 @@ class MountedMediaTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as raw:
             paths = media(Path(raw))
             efi = Device("loop99p1", Path("/dev/loop99p1"), "part", 1, fstype="vfat", label="FLEXBOOTEFI", uuid="ABCD-1234", mountpoints=(str(paths.efi),))
-            data = Device("loop99p2", Path("/dev/loop99p2"), "part", 1, fstype="ext4", label="FLEXBOOT", uuid="1234-abcd", mountpoints=(str(paths.data),))
+            data = Device("loop99p2", Path("/dev/loop99p2"), "part", 1, fstype="ext4", label="FLEXBOOT", uuid="1234-abcd", partition_number=2, mountpoints=(str(paths.data),))
             target = Device("loop99", Path("/dev/loop99"), "loop", 2, children=(efi, data))
             nodes = {node.path: node for node in (target, efi, data)}
             def run(argv, **kwargs):

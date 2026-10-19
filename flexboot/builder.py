@@ -11,7 +11,7 @@ from typing import Iterator
 from .branding import BRAND
 from .devices import discover, find_device
 from .doctor import preflight
-from .disk import ESP_GUID, assert_loop_target, discover_partitions, format_partitions, partition_device, validate_partition_nodes
+from .disk import ESP_GUID, data_partition_type, assert_loop_target, discover_partitions, format_partitions, partition_device, validate_partition_nodes
 from .errors import FlexBootError, SafetyError
 from .manifest import Manifest
 from .grub import install_grub
@@ -36,11 +36,12 @@ def filesystem_uuid(partition: Path, runner: Runner) -> str:
 
 def build_attached(device: Path, runner: Runner, *, identity_check=None, windows_size: int = 0,
                    ntloader: Path | None = None, windows_helper: Path | None = None, ntloader_sha256: str = "",
-                   boot_partition_role: str = "esp") -> None:
+                   boot_partition_role: str = "esp", data_filesystem: str = "ext4") -> None:
     if boot_partition_role != ("basic-fat" if windows_size else "esp"):
         raise SafetyError("Windows creation requires the explicit Basic Data FAT32 boot layout")
     require_root()
-    preflight("create")
+    data_partition_type(data_filesystem)
+    preflight("create-exfat" if data_filesystem == "exfat" else "create")
     if windows_size:
         from .windows import require_runtime
         preflight("windows")
@@ -51,13 +52,13 @@ def build_attached(device: Path, runner: Runner, *, identity_check=None, windows
         identity_check()
     else:
         assert_loop_target(device)
-    partition_device(device, runner, windows_size=windows_size, boot_partition_role=boot_partition_role)
-    partitions = discover_partitions(device, runner, include_windows=bool(windows_size), boot_partition_role=boot_partition_role)
+    partition_device(device, runner, windows_size=windows_size, boot_partition_role=boot_partition_role, data_filesystem=data_filesystem)
+    partitions = discover_partitions(device, runner, include_windows=bool(windows_size), boot_partition_role=boot_partition_role, data_filesystem=data_filesystem)
     efi_part, data_part = partitions[:2]
     if identity_check:
         identity_check()
     validate_partition_nodes(device, runner)
-    format_partitions(efi_part, data_part, runner)
+    format_partitions(efi_part, data_part, runner, data_filesystem=data_filesystem)
     data_uuid = filesystem_uuid(data_part, runner)
     with ExitStack() as stack:
         efi_root = stack.enter_context(mounted(efi_part, runner=runner))
@@ -68,7 +69,7 @@ def build_attached(device: Path, runner: Runner, *, identity_check=None, windows
             runner.run(["mkfs.ntfs", "-F", "-Q", "-L", BRAND.windows_label, str(partitions[2])], mutate=True)
             win_uuid = filesystem_uuid(partitions[2], runner)
             win_root = stack.enter_context(mounted(partitions[2], runner=runner))
-        paths = MediaPaths(efi_root, data_root, win_root, win_uuid, filesystem_uuid(efi_part, runner), boot_partition_role)
+        paths = MediaPaths(efi_root, data_root, win_root, win_uuid, filesystem_uuid(efi_part, runner), boot_partition_role, data_filesystem)
         install_grub(efi_root, runner)
         initialize(paths, data_uuid, runner)
         if windows_size:
@@ -84,12 +85,16 @@ def open_media(device: Path, runner: Runner, *, readonly: bool = False) -> Itera
     before = target.identity()
     if not readonly and (target.mounted or target.readonly):
         raise SafetyError("Writable media operations require an unmounted, writable target")
-    partitions = discover_partitions(device, runner, include_windows=True)
+    data_candidates = [child for child in target.children if child.type == "part" and child.partition_number == 2]
+    if len(data_candidates) != 1 or data_candidates[0].fstype not in ("ext4", "exfat"):
+        raise SafetyError("FlexBoot data partition must be ext4 or exfat")
+    data_filesystem = data_candidates[0].fstype
+    partitions = discover_partitions(device, runner, include_windows=True, data_filesystem=data_filesystem)
     efi_part, data_part = partitions[:2]
     validate_partition_nodes(device, runner)
     efi = find_device(efi_part, runner)
     data = find_device(data_part, runner)
-    if efi.fstype != "vfat" or efi.label != BRAND.efi_label or data.fstype != "ext4" or data.label != BRAND.data_label or not data.uuid:
+    if efi.fstype != "vfat" or efi.label != BRAND.efi_label or data.fstype != data_filesystem or data.label != BRAND.data_label or not data.uuid:
         raise SafetyError("Filesystems do not match the FlexBoot EFI/data layout")
     revalidate_identity(before, find_device(device, runner).identity())
     with ExitStack() as stack:
@@ -115,7 +120,7 @@ def open_media(device: Path, runner: Runner, *, readonly: bool = False) -> Itera
                 reused = stack.enter_context(mounted(part.path, readonly=readonly, runner=runner))
             roots.append(reused)
         boot_role = "esp" if efi.partition_type == ESP_GUID else "basic-fat"
-        paths = MediaPaths(roots[0], roots[1], roots[2] if len(roots)>2 else None, win_uuid, efi.uuid, boot_role)
+        paths = MediaPaths(roots[0], roots[1], roots[2] if len(roots)>2 else None, win_uuid, efi.uuid, boot_role, data_filesystem)
         for base, path in ((paths.data, paths.iso_dir), (paths.data, paths.data / BRAND.metadata_dir),
                            (paths.data, paths.manifest), (paths.efi, paths.grub_dir)):
             if path.is_symlink() or not path.resolve().is_relative_to(base.resolve()):

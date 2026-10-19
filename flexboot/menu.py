@@ -107,7 +107,7 @@ def configure(paths, action: str, *, entry=None, label=None, order=(), runner=No
     originals = {p: p.read_text(encoding='utf-8') if p.exists() else None for p in (path, base, generated)}
     candidate = base.with_name('grub.cfg.menu-new')
     try:
-        atomic_text(candidate, base_config(Manifest.load(paths.manifest).data_filesystem_uuid))
+        atomic_text(candidate, base_config(Manifest.load(paths.manifest).data_filesystem_uuid, paths.data_filesystem))
         validate_config(candidate, runner)
         atomic_text(path, json.dumps(settings, indent=2, sort_keys=True) + '\n')
         regenerate(paths, Manifest.load(paths.manifest), runner)

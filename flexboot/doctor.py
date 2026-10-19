@@ -15,7 +15,7 @@ PACKAGES = {
     "sfdisk": "fdisk", "wipefs": "util-linux", "blockdev": "util-linux",
     "mkfs.fat": "dosfstools", "mkfs.ext4": "e2fsprogs", "blkid": "util-linux",
     "7z": "7zip", "wimlib-imagex": "wimtools", "mkfs.ntfs": "ntfs-3g",
-    "ntfs-3g": "ntfs-3g",
+    "ntfs-3g": "ntfs-3g", "mkfs.exfat": "exfatprogs",
     "losetup": "util-linux", "mount": "mount", "umount": "mount",
     "udevadm": "udev", "grub-install": "grub2-common",
     "grub-script-check": "grub2-common", "xorriso": "xorriso",
@@ -25,11 +25,13 @@ DISCOVERY = ("lsblk", "findmnt")
 MEDIA = (*DISCOVERY, "blkid", "mount", "umount")
 CREATE = (*MEDIA, "sfdisk", "wipefs", "blockdev", "mkfs.fat", "mkfs.ext4", "udevadm", "grub-install")
 PROFILES = {"discovery": DISCOVERY, "media": MEDIA, "create": CREATE,
+            "create-exfat": (*(tool for tool in CREATE if tool != "mkfs.ext4"), "mkfs.exfat"),
+            "image-exfat": (*(tool for tool in CREATE if tool != "mkfs.ext4"), "mkfs.exfat", "losetup"),
             "windows": (*MEDIA, "7z", "wimlib-imagex", "mkfs.ntfs", "ntfs-3g", "grub-install"),
             "image": (*CREATE, "losetup"), "qemu": ("qemu-system-x86_64",)}
 REQUIRED = {name: PACKAGES[name] for name in ("python3", *PROFILES["image"])}
 OPTIONAL = {name: PACKAGES[name] for name in ("grub-script-check", "xorriso", "isoinfo", "qemu-system-x86_64")}
-GRUB_MODULES = ("normal", "linux", "loopback", "part_gpt", "fat", "ext2", "search_fs_uuid",
+GRUB_MODULES = ("normal", "linux", "loopback", "part_gpt", "fat", "ext2", "search_fs_uuid", "regexp", "file", "probe", "iso9660",
                 "efi_gop", "gfxterm", "gfxterm_background", "gfxmenu", "png", "font",
                 "reboot", "halt")
 GRUB_DIRECTORIES = (Path("/usr/lib/grub/x86_64-efi"), Path("/usr/lib/grub2/x86_64-efi"),
@@ -48,6 +50,17 @@ def grub_target_available() -> bool:
                for directory in GRUB_DIRECTORIES)
 
 
+def host_exfat_available() -> bool:
+    try:
+        if any(line.split()[-1:] == ["exfat"] for line in Path("/proc/filesystems").read_text().splitlines()):
+            return True
+    except OSError:
+        pass
+    if shutil.which("modprobe"):
+        return Runner().run(["modprobe", "--dry-run", "exfat"], check=False).returncode == 0
+    return False
+
+
 def diagnose(profile: str = "create") -> dict[str, object]:
     if profile not in PROFILES:
         raise ValueError(f"Unknown capability: {profile}")
@@ -57,6 +70,7 @@ def diagnose(profile: str = "create") -> dict[str, object]:
     font = GRUB_FONT.is_file()
     firmware = find_ovmf()
     version = ""
+    exfat_host = host_exfat_available()
     if commands["grub-install"]["found"]:
         probe = Runner().run(["grub-install", "--version"], check=False)
         commands["grub-install"]["usable"] = probe.returncode == 0
@@ -68,13 +82,17 @@ def diagnose(profile: str = "create") -> dict[str, object]:
         missing = [command for command in required if not commands[command]["found"] or not commands[command].get("usable", True)]
         if not host_ok:
             missing.append("Linux with Python >= 3.11")
-        if name in ("create", "image"):
+        if name in ("create", "image", "create-exfat", "image-exfat"):
             if not x64:
                 missing.append("x86-64 host")
             if not target:
                 missing.append("GRUB x86_64-efi modules")
             if not font:
                 missing.append("GRUB Unicode font")
+            if name.endswith("-exfat") and not any((directory / "exfat.mod").is_file() for directory in GRUB_DIRECTORIES):
+                missing.append("GRUB x86_64-efi exFAT module")
+            if name.endswith("-exfat") and not exfat_host:
+                missing.append("Host kernel exFAT filesystem driver")
         if name == "qemu" and not firmware:
             missing.append("OVMF")
         if name == "windows":

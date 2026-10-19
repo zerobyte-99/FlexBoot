@@ -67,3 +67,14 @@ NTFS layout, prepared WinPE, local WIM loader and native ISO attachment have the
 own inspection and integrity records; they share the visible GRUB menu. See the
 [Windows guide](WINDOWS.md) for explicit firmware/runtime requirements and tested
 formats. Renaming an arbitrary ISO does not make it eligible.
+
+
+## Host profiles versus boot discovery
+
+The host inspector supports more layouts and metadata checks than the bounded
+GRUB scanner introduced in 0.7.7. Adding a host profile does not automatically
+enable boot-time discovery. Keep runtime detection content-based and add real
+GRUB tests before extending it. Shared argument constants prevent differences
+between equivalent host and boot-time recipes. ExFAT host imports are separately
+restricted by `EXFAT_PROFILE_IDS`; extending that list needs filesystem-specific
+initramfs boot evidence. See [scope and limits](BOOT-DISCOVERY.md).

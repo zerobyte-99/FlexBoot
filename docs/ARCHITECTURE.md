@@ -84,3 +84,19 @@ by display label with stable ID tie-breaking. Saved preferences for removed
 images are retained for re-addition; reset clears them. Configuration publication
 validates candidate files before writing, with rollback on failure. Windows
 publication and Linux regeneration both rebuild the combined menu.
+
+
+## Read-only discovery and optional exFAT
+
+`discovery.py` renders a bounded GRUB scanner into the stable configuration.
+`generated.cfg` supplies exact managed-path exclusions and the optional Windows
+filesystem UUID. Runtime filenames are passed as data through menu arguments;
+ISO configuration is never executed. GRUB scans only the configured filesystems.
+Boot argument constants are shared with host profiles. Discovery is independent
+of manifest registration and has deliberately narrower profile coverage.
+
+The existing builder also supports explicit experimental exFAT Linux data:
+GPT Basic Data role, host formatter/kernel/GRUB preflight, filesystem-aware media
+opening, and early filename/profile checks. Ext4 remains the default. The
+optional Windows backend still uses its separate NTFS partition. See
+[boot discovery](BOOT-DISCOVERY.md) for compatibility and verification boundaries.

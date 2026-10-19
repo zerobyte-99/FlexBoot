@@ -65,3 +65,22 @@ and are not silently accepted by sync. These checks establish locally recorded
 integrity, not source authenticity. Firmware and physical USB compatibility still
 require human validation; successful OVMF installation tests do not remove that
 limit.
+
+
+## Boot-time discovery
+
+Discovered Linux files are unregistered user-supplied code. Their structural
+checks do not establish authenticity, completeness, or a recorded integrity
+baseline. The scanner is read-only, limits enumeration to configured filesystem
+UUIDs and a single `iso/` directory, and never executes configuration found in
+an ISO. It does not create aliases or update manifests. Simple filename checks
+prevent path fragments from becoming commands or split initramfs arguments.
+Managed aliases, hashes, labels and ordering retain their existing behavior.
+See [verification coverage](BOOT-DISCOVERY.md#managed-state-and-verification).
+
+Choosing experimental exFAT at creation retains the same target identity,
+whole-disk, system-disk, topology, and typed-confirmation checks as ext4. It
+requires the matching GPT data role and actual filesystem label/UUID when opened.
+Existing drives are not converted. New validation uses owned raw files and loop
+devices only; the full boot results and exclusions are in
+[the 0.7.7 report](TESTING-0.7.7.md).

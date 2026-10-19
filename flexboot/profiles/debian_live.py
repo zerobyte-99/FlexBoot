@@ -4,6 +4,9 @@ from .base import BootPlan, ISOInspection, ProfileMatch
 from .resources import live_kernel_pair
 
 
+BOOT_ARGS = "boot=live components findiso=${iso_path}"
+
+
 class DebianLiveProfile:
     profile_id = "debian-live"
     description = "Debian Live / Kali Live"
@@ -15,5 +18,5 @@ class DebianLiveProfile:
             return None
         return ProfileMatch(
             self.profile_id, self.description,
-            BootPlan("linux", pair[0], (pair[1],), "boot=live components findiso=${iso_path}"),
+            BootPlan("linux", pair[0], (pair[1],), BOOT_ARGS),
         )

@@ -13,13 +13,13 @@ detected a blank destination; a completed installation is not yet verified.
 ## Firmware and layout requirements
 
 The default Linux layout remains GPT, a 512 MiB FAT32 EFI System Partition, and
-ext4 data storage. Windows creation requires **both** `--windows-size` and
+ext4 data storage (or explicit experimental exFAT Linux storage). Windows creation requires **both** `--windows-size` and
 `--windows-boot-layout basic-fat`. Its layout is:
 
 | Partition | Filesystem | GPT role | Contents |
 |---|---|---|---|
 | 1 | FAT32, 512 MiB | Microsoft Basic Data | Removable UEFI GRUB, theme, local Windows runtime |
-| 2 | ext4 | Linux filesystem | Linux ISOs and FlexBoot metadata |
+| 2 | ext4 (default), or experimental exFAT | Linux filesystem for ext4; Basic Data for exFAT | Linux ISOs and FlexBoot metadata |
 | 3 | NTFS, requested reserve | Microsoft Basic Data | Intact Windows ISOs and per-image prepared resources |
 
 The Windows boot partition deliberately uses Basic Data rather than the ESP GUID.
@@ -219,3 +219,11 @@ ESD, split WIM, ARM64, BIOS, Secure Boot, arbitrary custom WinPE, and all firmwa
 variants are not claimed as supported. Boot WIM size is limited to
 2 GiB. Detection by contents is an eligibility check, not a guarantee that every
 new Windows release will install on every machine.
+
+## Linux files copied from Windows
+
+With the 0.7.7 menu installed, selected Linux ISOs copied directly into `iso/`
+on the NTFS partition can be discovered at boot. This is separate from Windows
+installer preparation: Windows ISO files still need `windows add`. See
+[boot discovery](BOOT-DISCOVERY.md) for supported layouts and simple filenames.
+The optional Windows storage remains NTFS when exFAT is selected for Linux data.
