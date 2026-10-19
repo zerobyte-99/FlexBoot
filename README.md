@@ -12,7 +12,7 @@
 
 ![Actual FlexBoot USB menu with Linux and Windows entries and the zerobyte / GPT-6.1-Sol credit](docs/images/boot-menu.png)
 
-Actual GRUB screen captured in QEMU/OVMF at 1920×1080, with example ISO entries.
+Actual 1280×800 GRUB capture from a 14-image physical USB, booted read-only in QEMU/OVMF. The menu is scrolled to show the Windows Server entries; see the [USB collection test report](docs/TESTING-0.7.5.md).
 
 FlexBoot is a small Linux command-line tool for building and maintaining UEFI multiboot media. ISO images remain intact as normal files, GRUB configuration stays readable, and every boot entry comes from an explicit profile that inspects the image contents.
 
@@ -72,10 +72,10 @@ When running directly from a checkout, replace `flexboot` with `python3 -m flexb
 | Grml amd64 | Matching flavour resources and boot ID; live-boot `findiso=` | Grml small 2026.09 QEMU login; hardware pending |
 | Gentoo amd64 Live | Current dracut layout and matching live-root label | Minimal 20260913 QEMU login; hardware pending |
 | Windows 10/11 x64 WIM installers, opt-in | Prepared WinPE, local NTloader, native read-only ISO API | 10/11 full installations and independent QEMU boots; 1803 Setup/disk detection; supplied Windows 10 hardware boot reported |
-| Windows Server x64 WIM installers, opt-in | Native WinPE, or explicit Windows 10 WinPE donor for older installers | Server 2012, 2012 R2, 2016 and 2019 full installations and independent first-run boots; Server 2022 Setup/disk detection |
+| Windows Server x64 WIM installers, opt-in | Native WinPE, or explicit Windows 10 WinPE donor for older installers | Server 2012, 2012 R2, 2016 and 2019 full installations and independent first-run boots; Server 2022 and 2025 Setup/disk detection |
 | Windows 7 x64 WIM installers, experimental opt-in | Windows 10 WinPE donor; UEFI with CSM enabled, Secure Boot off | Derived Enterprise RTM installer completed installation and destination-only QEMU first-run boot; SP1 and native hardware installation untested |
 
-See the [Server 2012, Windows 7 and USB results](docs/TESTING-0.7.4.md), [earlier older Windows results](docs/TESTING-0.7.3.md), [compatibility expansion results](docs/TESTING-0.7.2.md) and [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
+See the [14-image USB and Server 2025 results](docs/TESTING-0.7.5.md), [Server 2012, Windows 7 and USB results](docs/TESTING-0.7.4.md), [earlier older Windows results](docs/TESTING-0.7.3.md), [compatibility expansion results](docs/TESTING-0.7.2.md) and [0.7.0 USB-backed validation results](docs/TESTING-0.7.0.md) for exact images, test scope, and remaining hardware limits.
 
 FlexBoot rejects incomplete and unknown layouts instead of producing speculative menu entries. Installer-only Kali images and Fedora network installers do not match the live profiles.
 
@@ -268,6 +268,13 @@ sudo python3 -m flexboot remove /dev/sdX old.iso
 # Reinspect files and regenerate metadata, GRUB, and theme assets
 sudo python3 -m flexboot sync /dev/sdX
 ```
+
+You can also copy supported Linux ISOs directly into the ext4 data partition's
+`iso/` directory, then run `sudo flexboot sync /dev/sdX` to inspect them and
+update the menu. Files must be directly inside `iso/`, not nested in subdirectories.
+Copying alone does not update GRUB. Prefer `flexboot add` for its transactional
+copying and integrity recording. Windows ISOs require `flexboot windows add` to
+prepare boot resources; copying them onto NTFS and running `sync` does not import them.
 
 `sync` stops if an unsupported ISO is present. Unsupported files never receive guessed boot entries.
 It also rejects changed integrity hashes rather than accepting same-size changes.
@@ -489,6 +496,7 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 | [Installation](docs/INSTALLATION.md) | Dependency setup and the global command |
 | [Troubleshooting](docs/TROUBLESHOOTING.md) | Common dependency, ISO, GRUB, and theme issues |
 | [Research](docs/RESEARCH.md) | Primary technical references |
+| [Possible next steps](docs/ROADMAP.md) | Compatibility, recovery, and diagnostics candidates |
 
 ## Current limitations
 
@@ -500,6 +508,8 @@ See [development](docs/DEVELOPMENT.md) for the test workflow and host-dependent 
 - Persistence overlays unsupported
 - Encrypted ISO storage unsupported
 - Custom profile definitions unsupported
+
+Near-term candidates are tracked in [possible next steps](docs/ROADMAP.md).
 
 The roadmap includes persistence for compatible distributions, richer theme controls, Secure Boot design, legacy BIOS, ARM64 UEFI, broader Windows image and firmware coverage, and an optional desktop frontend. New boot families are added only when their boot mechanism can be documented and validated reliably.
 

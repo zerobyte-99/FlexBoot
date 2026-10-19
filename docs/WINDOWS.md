@@ -6,6 +6,10 @@ intact on a separate NTFS partition; their prepared boot resources come from the
 selected ISO. No Windows image, Microsoft boot binary, or third-party loader is
 shipped in this repository.
 
+The [14-image USB test report](TESTING-0.7.5.md) covers the Server 2012 R2,
+2016, 2019, 2022 and 2025 collection. Server 2025 reached native Setup and
+detected a blank destination; a completed installation is not yet verified.
+
 ## Firmware and layout requirements
 
 The default Linux layout remains GPT, a 512 MiB FAT32 EFI System Partition, and

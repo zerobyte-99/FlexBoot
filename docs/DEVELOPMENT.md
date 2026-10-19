@@ -66,11 +66,13 @@ support a local QEMU executable and ROM directory. Use `--wait 30` on slower hos
 The output must be a new file. Inspect it visually before replacing the README
 image at `docs/images/boot-menu.png`.
 
-The current README image (0.7.5) was captured from the existing nine-image USB
+The current README image was captured with FlexBoot 0.7.5 from the rebuilt 14-image USB
 under QEMU using a read-only physical backing device and a private writable
 overlay. Its physical write-sector counter stayed unchanged during capture.
-It shows the deployed branding and menu; it does not establish a new native
-hardware boot result.
+It is an unedited 1280×800 capture, scrolled to the Windows Server entries, and
+shows the deployed branding and menu. It does not establish a new native hardware
+boot result. The [collection test report](TESTING-0.7.5.md) also includes actual
+Server 2025 Setup and Clonezilla live-interface captures from the same USB.
 
 ## Real ISO boot tests without root
 
